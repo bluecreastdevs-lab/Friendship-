@@ -5,29 +5,7 @@ import VideoPlayer from './components/VideoPlayer';
 import ChatDrawer from './components/ChatDrawer';
 import VoiceCall from './components/VoiceCall';
 import { Film, Settings, Bell } from 'lucide-react';
-
-interface Participant {
-  socketId: string;
-  name: string;
-  avatarColor: string;
-  isMuted: boolean;
-}
-
-interface Message {
-  id: string;
-  sender: string;
-  text: string;
-  time: string;
-  avatarColor: string;
-}
-
-interface MediaState {
-  isPlaying: boolean;
-  currentTime: number;
-  mediaUrl: string;
-  mediaType: 'video' | 'audio';
-  lastUpdated: number;
-}
+import { Participant, Message, MediaState } from './types';
 
 const AVATAR_COLORS = ['#6366f1', '#ec4899', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6'];
 

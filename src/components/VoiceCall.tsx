@@ -1,13 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Mic, MicOff, PhoneCall, PhoneOff, Users } from 'lucide-react';
 import { Socket } from 'socket.io-client';
-
-interface Participant {
-  socketId: string;
-  name: string;
-  avatarColor: string;
-  isMuted: boolean;
-}
+import { Participant } from '../types';
 
 interface VoiceCallProps {
   socket: Socket | null;

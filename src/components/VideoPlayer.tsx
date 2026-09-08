@@ -1,20 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Play, Pause, Volume2, VolumeX, Maximize, Upload, Link as LinkIcon, Settings, RotateCcw } from 'lucide-react';
-
-interface Participant {
-  socketId: string;
-  name: string;
-  avatarColor: string;
-  isMuted: boolean;
-}
-
-interface MediaState {
-  isPlaying: boolean;
-  currentTime: number;
-  mediaUrl: string;
-  mediaType: 'video' | 'audio';
-  lastUpdated: number;
-}
+import { Play, Pause, Volume2, VolumeX, Maximize, Upload, Link as LinkIcon, RotateCcw } from 'lucide-react';
+import { Participant, MediaState } from '../types';
 
 interface VideoPlayerProps {
   mediaState: MediaState;

@@ -1,13 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, MessageSquare, Bell, BellOff } from 'lucide-react';
-
-interface Message {
-  id: string;
-  sender: string;
-  text: string;
-  time: string;
-  avatarColor: string;
-}
+import { Message } from '../types';
 
 interface ChatDrawerProps {
   messages: Message[];
