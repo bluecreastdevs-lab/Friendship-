@@ -1,0 +1,6 @@
+{
+  "name": "SyncSpace",
+  "description": "Cross-platform real-time synchronized media lounge with WebRTC voice chat and 3D animated background",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
