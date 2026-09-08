@@ -85,17 +85,24 @@ export default function VideoPlayer({ mediaState, onMediaStateChange, participan
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const fileUrl = URL.createObjectURL(file);
+
     let type: 'video' | 'audio' | 'image' = 'video';
     if (file.type.startsWith('audio')) type = 'audio';
     else if (file.type.startsWith('image')) type = 'image';
 
-    onMediaStateChange({
-      mediaUrl: fileUrl,
-      mediaType: type,
-      currentTime: 0,
-      isPlaying: type !== 'image'
-    });
+    const reader = new FileReader();
+    reader.onload = (uploadEvent) => {
+      const dataUrl = uploadEvent.target?.result as string;
+      if (dataUrl) {
+        onMediaStateChange({
+          mediaUrl: dataUrl,
+          mediaType: type,
+          currentTime: 0,
+          isPlaying: type !== 'image'
+        });
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleUrlSubmit = (e: React.FormEvent) => {
@@ -155,8 +162,6 @@ export default function VideoPlayer({ mediaState, onMediaStateChange, participan
             <audio
               ref={mediaRef as React.RefObject<HTMLAudioElement>}
               src={mediaState.mediaUrl}
-              onPlay={() => onMediaStateChange({ isPlaying: true })}
-              onPause={() => onMediaStateChange({ isPlaying: false })}
               controls={false}
               autoPlay={mediaState.isPlaying}
               muted={isMutedLocal}
@@ -183,8 +188,6 @@ export default function VideoPlayer({ mediaState, onMediaStateChange, participan
               src={mediaState.mediaUrl}
               className="w-full h-full object-contain cursor-pointer"
               onClick={handlePlayPause}
-              onPlay={() => onMediaStateChange({ isPlaying: true })}
-              onPause={() => onMediaStateChange({ isPlaying: false })}
               playsInline
               muted={isMutedLocal}
             />
