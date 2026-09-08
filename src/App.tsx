@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 import ThreeBackground from './components/ThreeBackground';
-import VideoPlayer from './components/VideoPlayer';
+import MoviePlayer from './components/MoviePlayer';
+import ImageViewer from './components/ImageViewer';
 import ChatDrawer from './components/ChatDrawer';
 import VoiceCall from './components/VoiceCall';
-import { Film, Settings, Bell } from 'lucide-react';
-import { Participant, Message, MediaState } from './types';
+import { Film, Image as ImageIcon, Copy, Check, Users, ExternalLink, Sparkles } from 'lucide-react';
+import { Participant, Message, MovieState, ImageState, MovieActionPayload, ImageActionPayload } from './types';
 
 const AVATAR_COLORS = ['#6366f1', '#ec4899', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6'];
 
@@ -14,45 +15,155 @@ export default function App() {
   const [userName, setUserName] = useState('');
   const [roomId, setRoomId] = useState('lounge-101');
   const [avatarColor, setAvatarColor] = useState(AVATAR_COLORS[0]);
+  const [copiedRoom, setCopiedRoom] = useState(false);
 
+  // Tab state: 'movie' vs 'image'
+  const [mediaTab, setMediaTab] = useState<'movie' | 'image'>('movie');
+
+  // Socket
   const [socket, setSocket] = useState<Socket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
+
+  // Participants & Messages
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [mediaState, setMediaState] = useState<MediaState>({
-    isPlaying: false,
-    currentTime: 0,
+
+  // Movie State (Independent sync channel)
+  const [movieState, setMovieState] = useState<MovieState>({
     mediaUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
     mediaType: 'video',
-    lastUpdated: Date.now()
+    isPlaying: false,
+    currentTime: 0,
+    serverTimestamp: Date.now(),
+    mediaTitle: 'Big Buck Bunny (Animated Classic)',
+    uploadedBy: 'System'
   });
 
-  const [activeTab, setActiveTab] = useState<'chat' | 'voice'>('chat');
+  // Image State (Independent sync channel)
+  const [imageState, setImageState] = useState<ImageState>({
+    activeImageUrl: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1600&auto=format&fit=crop&q=80',
+    activeImageTitle: 'Deep Cosmic Nebula (Space 4K)',
+    uploadedBy: 'System',
+    imageZoom: 1,
+    gallery: [
+      {
+        id: 'img-nebula',
+        url: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1600&auto=format&fit=crop&q=80',
+        title: 'Deep Cosmic Nebula (Space 4K)',
+        uploadedBy: 'System',
+        thumbnail: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&auto=format&fit=crop&q=80'
+      },
+      {
+        id: 'img-cyberpunk',
+        url: 'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=1600&auto=format&fit=crop&q=80',
+        title: 'Cyberpunk Metropolis Night',
+        uploadedBy: 'System',
+        thumbnail: 'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=400&auto=format&fit=crop&q=80'
+      },
+      {
+        id: 'img-aurora',
+        url: 'https://images.unsplash.com/photo-1531366936337-7c912a4589a7?w=1600&auto=format&fit=crop&q=80',
+        title: 'Aurora Borealis Glaciers',
+        uploadedBy: 'System',
+        thumbnail: 'https://images.unsplash.com/photo-1531366936337-7c912a4589a7?w=400&auto=format&fit=crop&q=80'
+      },
+      {
+        id: 'img-lake',
+        url: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1600&auto=format&fit=crop&q=80',
+        title: 'Alpine Emerald Lake Sunset',
+        uploadedBy: 'System',
+        thumbnail: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&auto=format&fit=crop&q=80'
+      }
+    ]
+  });
 
-  const handleJoinRoom = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userName.trim() || !roomId.trim()) return;
+  const [activeSideTab, setActiveSideTab] = useState<'chat' | 'voice'>('chat');
 
+  // Check URL search parameters on load (supports opening movie or image in a dedicated new tab!)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const roomParam = params.get('room');
+      const tabParam = params.get('tab');
+      const nameParam = params.get('name');
+
+      if (roomParam) {
+        setRoomId(roomParam);
+      }
+      if (tabParam === 'image' || tabParam === 'movie') {
+        setMediaTab(tabParam);
+      }
+
+      if (nameParam) {
+        setUserName(nameParam);
+      } else if (roomParam) {
+        // Generate random guest name if joined via room link
+        setUserName(`User_${Math.floor(1000 + Math.random() * 9000)}`);
+      }
+    } catch (_) {}
+  }, []);
+
+  // Connect to room
+  const connectToRoom = (targetRoomId: string, name: string, color: string) => {
     const newSocket = io();
+    socketRef.current = newSocket;
     setSocket(newSocket);
 
     newSocket.emit('join-room', {
-      roomId: roomId.trim(),
-      name: userName.trim(),
-      avatarColor
+      roomId: targetRoomId.trim(),
+      name: name.trim(),
+      avatarColor: color
     });
 
+    // Authoritative room-state synchronization
     newSocket.on('room-state', (state) => {
-      setMediaState(state.mediaState);
-      setParticipants(state.participants);
-      setMessages(state.messages);
+      if (state.movieState) {
+        setMovieState((prev) => ({
+          ...prev,
+          ...state.movieState
+        }));
+      }
+      if (state.imageState) {
+        setImageState((prev) => ({
+          ...prev,
+          ...state.imageState
+        }));
+      }
+      if (state.participants) {
+        setParticipants(state.participants);
+      }
+      if (state.messages) {
+        setMessages(state.messages);
+      }
+    });
+
+    // Dedicated movie sync packet
+    newSocket.on('movie_action', (packet: MovieActionPayload) => {
+      setMovieState((prev) => ({
+        ...prev,
+        mediaUrl: packet.mediaUrl || prev.mediaUrl,
+        currentTime: packet.currentTime ?? prev.currentTime,
+        isPlaying: packet.isPlaying ?? prev.isPlaying,
+        mediaTitle: packet.mediaTitle || prev.mediaTitle,
+        uploadedBy: packet.uploadedBy || prev.uploadedBy,
+        serverTimestamp: packet.serverTimestamp || Date.now()
+      }));
+    });
+
+    // Dedicated image sync packet
+    newSocket.on('image_action', (packet: ImageActionPayload) => {
+      setImageState((prev) => ({
+        ...prev,
+        activeImageUrl: packet.activeImageUrl || prev.activeImageUrl,
+        activeImageTitle: packet.activeImageTitle || prev.activeImageTitle,
+        uploadedBy: packet.uploadedBy || prev.uploadedBy,
+        imageZoom: packet.imageZoom ?? prev.imageZoom,
+        gallery: packet.gallery || prev.gallery
+      }));
     });
 
     newSocket.on('participants-update', (updatedParticipants) => {
       setParticipants(updatedParticipants);
-    });
-
-    newSocket.on('media-sync', (remoteState) => {
-      setMediaState(remoteState);
     });
 
     newSocket.on('chat-message', (msg) => {
@@ -62,14 +173,35 @@ export default function App() {
     setInLounge(true);
   };
 
-  const handleMediaStateChange = (updatedState: Partial<MediaState>) => {
-    const nextState = { ...mediaState, ...updatedState, lastUpdated: Date.now() };
-    setMediaState(nextState);
-    socket?.emit('media-sync', { roomId, state: nextState });
+  const handleJoinRoom = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userName.trim() || !roomId.trim()) return;
+    connectToRoom(roomId, userName, avatarColor);
+  };
+
+  // State handlers
+  const handleMovieStateChange = (updated: Partial<MovieState>) => {
+    setMovieState((prev) => ({
+      ...prev,
+      ...updated,
+      serverTimestamp: Date.now()
+    }));
+  };
+
+  const handleImageStateChange = (updated: Partial<ImageState>) => {
+    setImageState((prev) => ({
+      ...prev,
+      ...updated,
+      serverTimestamp: Date.now()
+    }));
+  };
+
+  const handleRequestSync = () => {
+    socketRef.current?.emit('request-sync', { roomId });
   };
 
   const handleSendMessage = (text: string) => {
-    socket?.emit('chat-message', {
+    socketRef.current?.emit('chat-message', {
       roomId,
       message: {
         sender: userName,
@@ -80,7 +212,25 @@ export default function App() {
   };
 
   const handleToggleMic = (isMuted: boolean) => {
-    socket?.emit('toggle-mic', { roomId, isMuted });
+    socketRef.current?.emit('toggle-mic', { roomId, isMuted });
+  };
+
+  const handleCopyRoom = () => {
+    navigator.clipboard.writeText(roomId);
+    setCopiedRoom(true);
+    setTimeout(() => setCopiedRoom(false), 2000);
+  };
+
+  // Open the image tab in a brand new browser tab
+  const handleOpenImageNewTab = () => {
+    const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomId)}&tab=image&name=${encodeURIComponent(userName || 'User')}`;
+    window.open(url, '_blank');
+  };
+
+  // Open the movie tab in a brand new browser tab
+  const handleOpenMovieNewTab = () => {
+    const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomId)}&tab=movie&name=${encodeURIComponent(userName || 'User')}`;
+    window.open(url, '_blank');
   };
 
   if (!inLounge) {
@@ -88,13 +238,43 @@ export default function App() {
       <div className="relative min-h-screen w-full flex items-center justify-center p-4 bg-slate-950 font-sans">
         <ThreeBackground />
 
-        <div className="w-full max-w-md bg-slate-900/80 backdrop-blur-xl border border-slate-700/60 p-8 rounded-3xl shadow-2xl space-y-6">
+        <div className="w-full max-w-md bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 p-8 rounded-3xl shadow-2xl space-y-6 z-10">
           <div className="flex flex-col items-center space-y-2 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
               <Film className="w-7 h-7 text-white" />
             </div>
             <h1 className="text-2xl font-bold text-white tracking-tight">SyncSpace</h1>
-            <p className="text-sm text-slate-400">Real-time synchronized media lounge & voice chat</p>
+            <p className="text-xs text-slate-400">
+              Watch movies & browse photos together in real-time sync with voice lounge
+            </p>
+          </div>
+
+          {/* Quick mode selector preview */}
+          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-800/80 rounded-2xl border border-slate-700/60">
+            <button
+              type="button"
+              onClick={() => setMediaTab('movie')}
+              className={`flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                mediaTab === 'movie'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Film className="w-4 h-4" />
+              <span>Movie Lounge</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMediaTab('image')}
+              className={`flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                mediaTab === 'image'
+                  ? 'bg-pink-600 text-white shadow-md shadow-pink-600/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <ImageIcon className="w-4 h-4" />
+              <span>Image Gallery</span>
+            </button>
           </div>
 
           <form onSubmit={handleJoinRoom} className="space-y-4">
@@ -111,7 +291,7 @@ export default function App() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-300">Room ID</label>
+              <label className="text-xs font-medium text-slate-300">Lounge Room ID</label>
               <input
                 type="text"
                 placeholder="e.g. movie-night-101"
@@ -141,9 +321,9 @@ export default function App() {
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-medium rounded-xl shadow-lg shadow-indigo-600/30 transition-all transform hover:-translate-y-0.5"
+              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all transform hover:-translate-y-0.5"
             >
-              Enter Lounge
+              Enter Synced Lounge
             </button>
           </form>
         </div>
@@ -152,71 +332,142 @@ export default function App() {
   }
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-slate-950 font-sans p-2 lg:p-4 gap-4">
+    <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-slate-950 font-sans p-2 lg:p-4 gap-3.5">
       <ThreeBackground />
 
-      {/* Top Header Bar */}
-      <header className="flex items-center justify-between px-6 py-3 bg-slate-900/90 backdrop-blur-xl border border-slate-700/60 rounded-2xl shadow-xl shrink-0">
-        <div className="flex items-center space-x-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-pink-500 flex items-center justify-center shadow-md">
-            <Film className="w-5 h-5 text-white" />
+      {/* Top Navigation & Controls Bar */}
+      <header className="flex items-center justify-between px-3 sm:px-5 py-2.5 bg-slate-900/90 backdrop-blur-xl border border-slate-800/80 rounded-2xl shadow-xl shrink-0 z-20">
+        <div className="flex items-center space-x-4 min-w-0">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-md">
+              <Film className="w-4 h-4 text-white" />
+            </div>
+            <span className="text-base font-bold tracking-wider text-white font-mono hidden sm:inline">
+              SYNCSPACE
+            </span>
           </div>
-          <span className="text-lg font-bold tracking-wider text-white font-mono">SYNCSPACE</span>
+
+          {/* Primary Media Switcher Tabs: Movie Page vs Image Page */}
+          <div className="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800 shadow-inner">
+            <button
+              onClick={() => setMediaTab('movie')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                mediaTab === 'movie'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Switch to Synced Movie Lounge"
+            >
+              <Film className="w-3.5 h-3.5" />
+              <span>Movie Page</span>
+            </button>
+
+            <button
+              onClick={() => setMediaTab('image')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                mediaTab === 'image'
+                  ? 'bg-pink-600 text-white shadow-md shadow-pink-600/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Switch to Synced Image Gallery"
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span>Image Page</span>
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center space-x-4">
-          <div className="hidden sm:flex items-center space-x-2 px-3 py-1.5 bg-slate-800/80 rounded-full border border-slate-700">
-            <div 
-              className="w-6 h-6 rounded-full flex items-center justify-center font-bold text-white text-[10px]"
+        {/* Center Room Indicator */}
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleCopyRoom}
+            className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800/90 hover:bg-slate-700/90 rounded-xl border border-slate-700 text-xs text-slate-200 transition-colors shadow-sm"
+            title="Click to copy Room Link to invite peers"
+          >
+            <span className="text-slate-400 font-normal">Room:</span>
+            <span className="font-mono font-bold text-indigo-300">{roomId}</span>
+            {copiedRoom ? (
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Copy className="w-3.5 h-3.5 text-slate-400" />
+            )}
+          </button>
+        </div>
+
+        {/* Right User & Open-in-New-Tab shortcuts */}
+        <div className="flex items-center space-x-2.5">
+          {/* Open current page in new tab shortcut */}
+          <button
+            onClick={mediaTab === 'image' ? handleOpenImageNewTab : handleOpenMovieNewTab}
+            className="hidden md:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-medium transition-colors shadow-sm"
+            title={mediaTab === 'image' ? 'Open Image Page in New Browser Tab' : 'Open Movie Page in New Browser Tab'}
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Open {mediaTab === 'image' ? 'Image' : 'Movie'} in New Tab</span>
+          </button>
+
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 bg-slate-800/80 rounded-xl border border-slate-700 text-xs text-slate-300">
+            <Users className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="font-semibold text-white">{participants.length}</span>
+          </div>
+
+          <div className="flex items-center space-x-2 px-2.5 py-1 bg-slate-800/80 rounded-full border border-slate-700">
+            <div
+              className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-[9px]"
               style={{ backgroundColor: avatarColor }}
             >
               {userName.slice(0, 2).toUpperCase()}
             </div>
-            <span className="text-xs font-medium text-slate-200">{userName}</span>
-          </div>
-
-          <div className="flex items-center space-x-2 px-3 py-1.5 bg-slate-800/80 hover:bg-slate-700/80 rounded-xl border border-slate-700 text-xs text-slate-200 cursor-pointer transition-colors">
-            <Settings className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="font-medium">Room settings</span>
-          </div>
-
-          <div className="relative p-2 bg-slate-800/80 hover:bg-slate-700/80 rounded-xl border border-slate-750 text-slate-300 cursor-pointer transition-colors">
-            <Bell className="w-4 h-4" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow">
-              1
-            </span>
+            <span className="text-xs font-medium text-slate-200 hidden sm:inline">{userName}</span>
           </div>
         </div>
       </header>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col lg:flex-row min-h-0 gap-4">
-        {/* Left / Main Area: Video Player */}
-        <div className="flex-1 flex flex-col h-[60vh] lg:h-full min-h-0">
-          <VideoPlayer
-            mediaState={mediaState}
-            onMediaStateChange={handleMediaStateChange}
-            participants={participants}
-            currentUser={userName}
-          />
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0 gap-3.5">
+        {/* Left / Main Section: Active Media Tab (Movie or Image) */}
+        <div className="flex-1 flex flex-col h-[60vh] lg:h-full min-h-0 relative">
+          {mediaTab === 'movie' ? (
+            <MoviePlayer
+              socket={socket}
+              roomId={roomId}
+              movieState={movieState}
+              onMovieStateChange={handleMovieStateChange}
+              participants={participants}
+              currentUser={userName}
+              onRequestSync={handleRequestSync}
+              onOpenInNewTab={handleOpenMovieNewTab}
+            />
+          ) : (
+            <ImageViewer
+              socket={socket}
+              roomId={roomId}
+              imageState={imageState}
+              onImageStateChange={handleImageStateChange}
+              currentUser={userName}
+              participants={participants}
+              onRequestSync={handleRequestSync}
+              onOpenInNewTab={handleOpenImageNewTab}
+            />
+          )}
         </div>
 
-        {/* Right / Side Area: Chat & Voice Controls */}
-        <div className="w-full lg:w-96 flex flex-col h-[38vh] lg:h-full min-h-0 gap-3">
+        {/* Right / Side Area: Real-Time Chat & Voice Calls */}
+        <div className="w-full lg:w-96 flex flex-col h-[38vh] lg:h-full min-h-0 gap-3 shrink-0">
           {/* Mobile Tab Switcher */}
           <div className="flex lg:hidden bg-slate-900/80 backdrop-blur-md rounded-xl p-1 border border-slate-700/50">
             <button
-              onClick={() => setActiveTab('chat')}
+              onClick={() => setActiveSideTab('chat')}
               className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors ${
-                activeTab === 'chat' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                activeSideTab === 'chat' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
               }`}
             >
               Chat
             </button>
             <button
-              onClick={() => setActiveTab('voice')}
+              onClick={() => setActiveSideTab('voice')}
               className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors ${
-                activeTab === 'voice' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                activeSideTab === 'voice' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
               }`}
             >
               Voice Lounge
@@ -225,7 +476,7 @@ export default function App() {
 
           {/* Desktop Side-by-side or Mobile Active Tab */}
           <div className="flex-1 flex flex-col min-h-0">
-            <div className={`h-full flex-col min-h-0 ${activeTab === 'chat' ? 'flex' : 'hidden lg:flex'}`}>
+            <div className={`h-full flex-col min-h-0 ${activeSideTab === 'chat' ? 'flex' : 'hidden lg:flex'}`}>
               <ChatDrawer
                 messages={messages}
                 onSendMessage={handleSendMessage}
@@ -235,7 +486,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className={`flex-shrink-0 ${activeTab === 'voice' ? 'flex' : 'hidden lg:flex'} flex-col`}>
+          <div className={`shrink-0 ${activeSideTab === 'voice' ? 'flex' : 'hidden lg:flex'} flex-col`}>
             <VoiceCall
               socket={socket}
               roomId={roomId}

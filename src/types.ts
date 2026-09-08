@@ -19,4 +19,77 @@ export interface MediaState {
   mediaUrl: string;
   mediaType: 'video' | 'audio' | 'image';
   lastUpdated: number;
+  mediaTitle?: string;
+  uploadedBy?: string;
+  duration?: number;
+  imageZoom?: number;
 }
+
+export interface MovieState {
+  mediaUrl: string;
+  mediaType: 'video';
+  isPlaying: boolean;
+  currentTime: number;
+  duration?: number;
+  mediaTitle: string;
+  uploadedBy?: string;
+  serverTimestamp: number;
+}
+
+export interface ImageItem {
+  id: string;
+  url: string;
+  title: string;
+  uploadedBy?: string;
+  thumbnail?: string;
+  timestamp?: number;
+}
+
+export interface ImageState {
+  activeImageUrl: string;
+  activeImageTitle: string;
+  uploadedBy?: string;
+  imageZoom: number;
+  gallery: ImageItem[];
+  serverTimestamp?: number;
+}
+
+export interface MovieActionPayload {
+  roomId: string;
+  type: 'play' | 'pause' | 'seek' | 'change_movie' | 'heartbeat';
+  currentTime: number;
+  isPlaying: boolean;
+  mediaUrl: string;
+  mediaTitle: string;
+  duration?: number;
+  uploadedBy?: string;
+  serverTimestamp: number;
+  senderId?: string;
+}
+
+export interface ImageActionPayload {
+  roomId: string;
+  type: 'select_image' | 'zoom' | 'add_image';
+  activeImageUrl: string;
+  activeImageTitle: string;
+  imageZoom?: number;
+  gallery?: ImageItem[];
+  uploadedBy?: string;
+  serverTimestamp: number;
+  senderId?: string;
+}
+
+export interface MediaActionPayload {
+  roomId: string;
+  mediaUrl: string;
+  mediaType: 'video' | 'image' | 'audio';
+  type: 'play' | 'pause' | 'seek' | 'change_media' | 'heartbeat' | 'image_view';
+  currentTime: number;
+  isPlaying?: boolean;
+  serverTimestamp: number;
+  mediaTitle?: string;
+  uploadedBy?: string;
+  senderId?: string;
+  imageZoom?: number;
+}
+
