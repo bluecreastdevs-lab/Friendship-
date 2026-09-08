@@ -146,6 +146,8 @@ export default function App() {
         isPlaying: packet.isPlaying ?? prev.isPlaying,
         mediaTitle: packet.mediaTitle || prev.mediaTitle,
         uploadedBy: packet.uploadedBy || prev.uploadedBy,
+        duration: packet.duration ?? prev.duration,
+        playlist: packet.playlist || prev.playlist,
         serverTimestamp: packet.serverTimestamp || Date.now()
       }));
     });
@@ -245,36 +247,8 @@ export default function App() {
             </div>
             <h1 className="text-2xl font-bold text-white tracking-tight">SyncSpace</h1>
             <p className="text-xs text-slate-400">
-              Watch movies & browse photos together in real-time sync with voice lounge
+              Real-time synchronized room with media playback, photo gallery, chat and voice
             </p>
-          </div>
-
-          {/* Quick mode selector preview */}
-          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-800/80 rounded-2xl border border-slate-700/60">
-            <button
-              type="button"
-              onClick={() => setMediaTab('movie')}
-              className={`flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                mediaTab === 'movie'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Film className="w-4 h-4" />
-              <span>Movie Lounge</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setMediaTab('image')}
-              className={`flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                mediaTab === 'image'
-                  ? 'bg-pink-600 text-white shadow-md shadow-pink-600/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <ImageIcon className="w-4 h-4" />
-              <span>Image Gallery</span>
-            </button>
           </div>
 
           <form onSubmit={handleJoinRoom} className="space-y-4">
@@ -336,66 +310,68 @@ export default function App() {
       <ThreeBackground />
 
       {/* Top Navigation & Controls Bar */}
-      <header className="flex items-center justify-between px-3 sm:px-5 py-2.5 bg-slate-900/90 backdrop-blur-xl border border-slate-800/80 rounded-2xl shadow-xl shrink-0 z-20">
-        <div className="flex items-center space-x-4 min-w-0">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-md">
-              <Film className="w-4 h-4 text-white" />
+      <header className="flex items-center justify-between px-2.5 sm:px-5 py-2 sm:py-2.5 bg-slate-900/95 backdrop-blur-xl border border-slate-800/80 rounded-2xl shadow-xl shrink-0 z-20 gap-2 overflow-hidden">
+        <div className="flex items-center space-x-2 sm:space-x-4 min-w-0 shrink-0">
+          <div className="flex items-center space-x-2">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-md shrink-0">
+              <Film className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
             </div>
-            <span className="text-base font-bold tracking-wider text-white font-mono hidden sm:inline">
+            <span className="text-sm sm:text-base font-bold tracking-wider text-white font-mono hidden md:inline">
               SYNCSPACE
             </span>
           </div>
 
           {/* Primary Media Switcher Tabs: Movie Page vs Image Page */}
-          <div className="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800 shadow-inner">
+          <div className="flex items-center p-0.5 sm:p-1 bg-slate-950/80 rounded-xl border border-slate-800 shadow-inner shrink-0">
             <button
               onClick={() => setMediaTab('movie')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 mediaTab === 'movie'
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                   : 'text-slate-400 hover:text-white'
               }`}
               title="Switch to Synced Movie Lounge"
             >
-              <Film className="w-3.5 h-3.5" />
-              <span>Movie Page</span>
+              <Film className="w-3.5 h-3.5 shrink-0" />
+              <span>Movie</span>
+              <span className="hidden sm:inline">Page</span>
             </button>
 
             <button
               onClick={() => setMediaTab('image')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 mediaTab === 'image'
                   ? 'bg-pink-600 text-white shadow-md shadow-pink-600/30'
                   : 'text-slate-400 hover:text-white'
               }`}
               title="Switch to Synced Image Gallery"
             >
-              <ImageIcon className="w-3.5 h-3.5" />
-              <span>Image Page</span>
+              <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+              <span>Image</span>
+              <span className="hidden sm:inline">Page</span>
             </button>
           </div>
         </div>
 
         {/* Center Room Indicator */}
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1.5 shrink-0">
           <button
             onClick={handleCopyRoom}
-            className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800/90 hover:bg-slate-700/90 rounded-xl border border-slate-700 text-xs text-slate-200 transition-colors shadow-sm"
+            className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-3 py-1 sm:py-1.5 bg-slate-800/90 hover:bg-slate-700/90 rounded-xl border border-slate-700 text-xs text-slate-200 transition-colors shadow-sm"
             title="Click to copy Room Link to invite peers"
           >
-            <span className="text-slate-400 font-normal">Room:</span>
-            <span className="font-mono font-bold text-indigo-300">{roomId}</span>
+            <span className="text-slate-400 font-normal hidden sm:inline">Room:</span>
+            <span className="font-mono font-bold text-indigo-300 truncate max-w-[85px] sm:max-w-none">{roomId}</span>
             {copiedRoom ? (
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400 shrink-0" />
             ) : (
-              <Copy className="w-3.5 h-3.5 text-slate-400" />
+              <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 shrink-0" />
             )}
           </button>
         </div>
 
         {/* Right User & Open-in-New-Tab shortcuts */}
-        <div className="flex items-center space-x-2.5">
+        <div className="flex items-center space-x-1.5 sm:space-x-2.5 shrink-0">
           {/* Open current page in new tab shortcut */}
           <button
             onClick={mediaTab === 'image' ? handleOpenImageNewTab : handleOpenMovieNewTab}
@@ -406,14 +382,14 @@ export default function App() {
             <span>Open {mediaTab === 'image' ? 'Image' : 'Movie'} in New Tab</span>
           </button>
 
-          <div className="flex items-center space-x-1.5 px-2.5 py-1 bg-slate-800/80 rounded-xl border border-slate-700 text-xs text-slate-300">
-            <Users className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="font-semibold text-white">{participants.length}</span>
+          <div className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1 bg-slate-800/80 rounded-xl border border-slate-700 text-xs text-slate-300">
+            <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400 shrink-0" />
+            <span className="font-semibold text-white text-[11px] sm:text-xs">{participants.length}</span>
           </div>
 
-          <div className="flex items-center space-x-2 px-2.5 py-1 bg-slate-800/80 rounded-full border border-slate-700">
+          <div className="flex items-center space-x-1.5 px-1.5 sm:px-2.5 py-1 bg-slate-800/80 rounded-full border border-slate-700">
             <div
-              className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-[9px]"
+              className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-[9px] shrink-0"
               style={{ backgroundColor: avatarColor }}
             >
               {userName.slice(0, 2).toUpperCase()}

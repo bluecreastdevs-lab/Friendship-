@@ -16,9 +16,10 @@ import {
   X,
   Loader2,
   ExternalLink,
-  Radio
+  Radio,
+  Trash2
 } from 'lucide-react';
-import { MovieState, Participant, MovieActionPayload } from '../types';
+import { MovieState, Participant, MovieActionPayload, VideoItem } from '../types';
 import { MEDIA_PRESETS } from '../presets';
 
 export interface MoviePlayerProps {
@@ -33,10 +34,25 @@ export interface MoviePlayerProps {
 }
 
 function formatTime(seconds: number): string {
-  if (isNaN(seconds) || seconds < 0) return '00:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  if (isNaN(seconds) || seconds < 0 || !isFinite(seconds)) return '00:00';
+  const totalSecs = Math.floor(seconds);
+  const hrs = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const secs = totalSecs % 60;
+  const pad = (n: number) => (n < 10 ? '0' : '') + n;
+
+  if (hrs > 0) {
+    return `${hrs}:${pad(mins)}:${pad(secs)}`;
+  }
+  return `${pad(mins)}:${pad(secs)}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 export default function MoviePlayer({
@@ -52,9 +68,16 @@ export default function MoviePlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const abortUploadRef = useRef<boolean>(false);
+  const activeUploadIdRef = useRef<string | null>(null);
 
-  // Anti-loop lock flag
+  // Anti-loop lock flag & sync refs
   const isRemoteAction = useRef<boolean>(false);
+  const pendingSeekTimeRef = useRef<number | null>(null);
+  const lastMediaUrlRef = useRef<string>(movieState.mediaUrl);
+  const movieStateRef = useRef<MovieState>(movieState);
+  movieStateRef.current = movieState;
 
   // Local playback & scrubbing states
   const [displayTime, setDisplayTime] = useState<number>(movieState.currentTime || 0);
@@ -64,14 +87,25 @@ export default function MoviePlayer({
   const [isBuffering, setIsBuffering] = useState<boolean>(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState<boolean>(false);
 
-  // Modals & upload states
+  // Modals & upload states (supports large movies of 2GB+ / 2:30hr)
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [uploadPercent, setUploadPercent] = useState<number>(0);
+  const [uploadBytesMsg, setUploadBytesMsg] = useState<string>('');
   const [uploadProgressMsg, setUploadProgressMsg] = useState<string>('');
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showPresetsModal, setShowPresetsModal] = useState<boolean>(false);
   const [showUrlModal, setShowUrlModal] = useState<boolean>(false);
   const [urlInput, setUrlInput] = useState<string>('');
   const [isResyncing, setIsResyncing] = useState<boolean>(false);
+
+  // Synchronize when mediaUrl or initial room state updates
+  useEffect(() => {
+    if (movieState.mediaUrl !== lastMediaUrlRef.current) {
+      lastMediaUrlRef.current = movieState.mediaUrl;
+      pendingSeekTimeRef.current = movieState.currentTime || 0;
+      setDisplayTime(movieState.currentTime || 0);
+    }
+  }, [movieState.mediaUrl, movieState.currentTime]);
 
   // Host detection
   const isHost = participants.length > 0 && participants[0].socketId === socket?.id;
@@ -105,6 +139,7 @@ export default function MoviePlayer({
         type,
         currentTime,
         isPlaying,
+        duration: overrides?.duration ?? duration,
         mediaTitle: overrides?.mediaTitle || movieState.mediaTitle,
         uploadedBy: overrides?.uploadedBy || movieState.uploadedBy || currentUser,
         serverTimestamp: Date.now()
@@ -115,10 +150,11 @@ export default function MoviePlayer({
         ...overrides,
         currentTime,
         isPlaying,
+        duration: packet.duration,
         serverTimestamp: Date.now()
       });
     },
-    [socket, roomId, movieState, currentUser, onMovieStateChange]
+    [socket, roomId, movieState, currentUser, duration, onMovieStateChange]
   );
 
   // Socket listener for movie_action
@@ -130,15 +166,67 @@ export default function MoviePlayer({
       isRemoteAction.current = true;
 
       if (packet.type === 'change_movie') {
+        pendingSeekTimeRef.current = packet.currentTime || 0;
+        lastMediaUrlRef.current = packet.mediaUrl;
         onMovieStateChange({
           mediaUrl: packet.mediaUrl,
           currentTime: packet.currentTime || 0,
           isPlaying: packet.isPlaying ?? true,
           mediaTitle: packet.mediaTitle,
           uploadedBy: packet.uploadedBy,
+          duration: packet.duration,
+          playlist: packet.playlist || movieState.playlist,
+          serverTimestamp: packet.serverTimestamp
+        });
+        setDisplayTime(packet.currentTime || 0);
+        setTimeout(() => {
+          isRemoteAction.current = false;
+        }, 300);
+        return;
+      } else if (packet.type === 'add_movie') {
+        const currentPl = movieState.playlist || [];
+        const item = packet.playlistItem || (packet.mediaUrl ? {
+          id: `vid-${Date.now()}`,
+          url: packet.mediaUrl,
+          title: packet.mediaTitle || 'Video',
+          uploadedBy: packet.uploadedBy || 'Someone'
+        } : null);
+        const updatedPl = packet.playlist || (item ? [item, ...currentPl.filter(v => v.url !== item.url)] : currentPl);
+
+        pendingSeekTimeRef.current = 0;
+        onMovieStateChange({
+          mediaUrl: packet.mediaUrl || movieState.mediaUrl,
+          mediaTitle: packet.mediaTitle || movieState.mediaTitle,
+          uploadedBy: packet.uploadedBy || movieState.uploadedBy,
+          currentTime: 0,
+          isPlaying: packet.isPlaying ?? true,
+          playlist: updatedPl,
           serverTimestamp: packet.serverTimestamp
         });
         setDisplayTime(0);
+        setTimeout(() => {
+          isRemoteAction.current = false;
+        }, 300);
+        return;
+      } else if (packet.type === 'delete_movie') {
+        const currentPl = movieState.playlist || [];
+        const updatedPl = packet.playlist || currentPl.filter(v => v.url !== packet.deletedMediaUrl);
+        const isCurrentDeleted = movieState.mediaUrl === packet.deletedMediaUrl;
+        const nextUrl = isCurrentDeleted ? (packet.mediaUrl || updatedPl[0]?.url || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4') : movieState.mediaUrl;
+        const nextTitle = isCurrentDeleted ? (packet.mediaTitle || updatedPl[0]?.title || 'Big Buck Bunny (Animated Classic)') : movieState.mediaTitle;
+
+        if (isCurrentDeleted) {
+          pendingSeekTimeRef.current = 0;
+          setDisplayTime(0);
+        }
+
+        onMovieStateChange({
+          mediaUrl: nextUrl,
+          mediaTitle: nextTitle,
+          playlist: updatedPl,
+          currentTime: isCurrentDeleted ? 0 : movieState.currentTime,
+          isPlaying: isCurrentDeleted ? false : movieState.isPlaying
+        });
         setTimeout(() => {
           isRemoteAction.current = false;
         }, 300);
@@ -155,17 +243,19 @@ export default function MoviePlayer({
         ? Math.max(0, (Date.now() - (packet.serverTimestamp || Date.now())) / 1000)
         : 0;
       const targetTime =
-        packet.isPlaying && transitLatency < 8
+        packet.isPlaying && transitLatency < 6
           ? packet.currentTime + transitLatency
           : packet.currentTime;
 
       if (packet.type === 'play') {
-        if (Math.abs(el.currentTime - targetTime) > 0.4) {
+        const diff = Math.abs(el.currentTime - targetTime);
+        if (diff > 1.2) {
           try {
             el.currentTime = targetTime;
             setDisplayTime(targetTime);
           } catch (_) {}
         }
+        el.playbackRate = 1.0;
         el.play().catch((err: any) => {
           if (err?.name === 'NotAllowedError') {
             el.muted = true;
@@ -177,31 +267,56 @@ export default function MoviePlayer({
         onMovieStateChange({ isPlaying: true, currentTime: targetTime });
       } else if (packet.type === 'pause') {
         el.pause();
+        el.playbackRate = 1.0;
         try {
           el.currentTime = targetTime;
           setDisplayTime(targetTime);
         } catch (_) {}
         onMovieStateChange({ isPlaying: false, currentTime: targetTime });
-      } else if (packet.type === 'seek' || packet.type === 'heartbeat') {
-        if (Math.abs(el.currentTime - targetTime) > 0.4 && !isSeeking) {
-          try {
-            el.currentTime = targetTime;
-            setDisplayTime(targetTime);
-          } catch (_) {}
-          onMovieStateChange({ currentTime: targetTime });
-        }
-
-        if (packet.isPlaying && el.paused && !isSeeking) {
-          el.play().catch((err: any) => {
-            if (err?.name === 'NotAllowedError') {
-              el.muted = true;
-              setIsMutedLocal(true);
-              setAutoplayBlocked(true);
-              el.play().catch(() => {});
-            }
-          });
+      } else if (packet.type === 'seek') {
+        // Immediate precise seek for explicit scrubber jumps
+        try {
+          el.currentTime = targetTime;
+          setDisplayTime(targetTime);
+        } catch (_) {}
+        el.playbackRate = 1.0;
+        if (packet.isPlaying && el.paused) {
+          el.play().catch(() => {});
         } else if (!packet.isPlaying && !el.paused) {
           el.pause();
+        }
+        onMovieStateChange({ currentTime: targetTime, isPlaying: packet.isPlaying });
+      } else if (packet.type === 'heartbeat') {
+        if (!isSeeking) {
+          const diff = targetTime - el.currentTime;
+          const absDiff = Math.abs(diff);
+
+          if (absDiff > 1.8) {
+            // Significant drift -> snap seek smoothly
+            try {
+              el.currentTime = targetTime;
+              setDisplayTime(targetTime);
+            } catch (_) {}
+            el.playbackRate = 1.0;
+          } else if (absDiff > 0.35 && packet.isPlaying && !el.paused) {
+            // Smooth micro-adjustment without audio/video stuttering
+            el.playbackRate = diff > 0 ? 1.05 : 0.95;
+          } else {
+            el.playbackRate = 1.0;
+          }
+
+          if (packet.isPlaying && el.paused) {
+            el.play().catch((err: any) => {
+              if (err?.name === 'NotAllowedError') {
+                el.muted = true;
+                setIsMutedLocal(true);
+                setAutoplayBlocked(true);
+                el.play().catch(() => {});
+              }
+            });
+          } else if (!packet.isPlaying && !el.paused) {
+            el.pause();
+          }
         }
       }
 
@@ -214,7 +329,7 @@ export default function MoviePlayer({
     return () => {
       socket.off('movie_action', handleMovieAction);
     };
-  }, [socket, onMovieStateChange, isSeeking]);
+  }, [socket, onMovieStateChange, isSeeking, movieState.playlist]);
 
   // Host heartbeat
   useEffect(() => {
@@ -241,6 +356,67 @@ export default function MoviePlayer({
       }
     };
   }, [isHost, movieState.isPlaying, isSeeking, broadcastMovieAction]);
+
+  // Delete a movie/video from room and disk storage
+  const handleDeleteMovie = async (targetUrl: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (!targetUrl) return;
+
+    // Call REST endpoint for filesystem deletion
+    try {
+      await fetch('/api/media/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, url: targetUrl, mediaType: 'video' })
+      });
+    } catch (err) {
+      console.error('Delete video API failed', err);
+    }
+
+    const currentPl = movieState.playlist || [];
+    const updatedPl = currentPl.filter((v) => v.url !== targetUrl);
+    const isCurrent = movieState.mediaUrl === targetUrl;
+    let nextUrl = movieState.mediaUrl;
+    let nextTitle = movieState.mediaTitle;
+    let nextUploadedBy = movieState.uploadedBy;
+
+    if (isCurrent) {
+      if (updatedPl.length > 0) {
+        nextUrl = updatedPl[0].url;
+        nextTitle = updatedPl[0].title;
+        nextUploadedBy = updatedPl[0].uploadedBy;
+      } else {
+        nextUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        nextTitle = 'Big Buck Bunny (Animated Classic)';
+        nextUploadedBy = 'System';
+      }
+      setDisplayTime(0);
+    }
+
+    onMovieStateChange({
+      mediaUrl: nextUrl,
+      mediaTitle: nextTitle,
+      uploadedBy: nextUploadedBy,
+      playlist: updatedPl,
+      currentTime: isCurrent ? 0 : movieState.currentTime,
+      isPlaying: isCurrent ? false : movieState.isPlaying
+    });
+
+    socket?.emit('movie_action', {
+      roomId,
+      type: 'delete_movie',
+      mediaUrl: nextUrl,
+      mediaTitle: nextTitle,
+      uploadedBy: nextUploadedBy,
+      deletedMediaUrl: targetUrl,
+      playlist: updatedPl,
+      currentTime: 0,
+      isPlaying: isCurrent ? false : movieState.isPlaying
+    });
+  };
 
   // User Play/Pause click
   const handleTogglePlay = () => {
@@ -306,19 +482,53 @@ export default function MoviePlayer({
     }
   };
 
-  // Video duration loaded
+  // Video duration loaded & seek reconciliation
   const handleLoadedMetadata = () => {
-    if (videoRef.current) {
-      const dur = videoRef.current.duration;
-      if (!isNaN(dur) && dur > 0) {
-        setDuration(dur);
+    const el = videoRef.current;
+    if (!el) return;
+
+    const dur = el.duration;
+    if (!isNaN(dur) && isFinite(dur) && dur > 0) {
+      setDuration(dur);
+      if (dur !== movieStateRef.current.duration) {
+        onMovieStateChange({ duration: dur });
       }
-      if (movieState.currentTime > 0) {
-        videoRef.current.currentTime = movieState.currentTime;
-      }
-      if (movieState.isPlaying) {
-        videoRef.current.play().catch(() => {});
-      }
+    }
+
+    const targetTime =
+      pendingSeekTimeRef.current !== null
+        ? pendingSeekTimeRef.current
+        : movieStateRef.current.currentTime;
+
+    if (typeof targetTime === 'number' && targetTime > 0) {
+      try {
+        el.currentTime = targetTime;
+        setDisplayTime(targetTime);
+      } catch (_) {}
+    }
+    pendingSeekTimeRef.current = null;
+
+    if (movieStateRef.current.isPlaying) {
+      el.play().catch((err: any) => {
+        if (err?.name === 'NotAllowedError') {
+          el.muted = true;
+          setIsMutedLocal(true);
+          setAutoplayBlocked(true);
+          el.play().catch(() => {});
+        }
+      });
+    }
+  };
+
+  const handleCanPlay = () => {
+    setIsBuffering(false);
+    const el = videoRef.current;
+    if (el && pendingSeekTimeRef.current !== null) {
+      try {
+        el.currentTime = pendingSeekTimeRef.current;
+        setDisplayTime(pendingSeekTimeRef.current);
+      } catch (_) {}
+      pendingSeekTimeRef.current = null;
     }
   };
 
@@ -340,46 +550,220 @@ export default function MoviePlayer({
     }
   };
 
-  // File upload
+  // Cancel ongoing upload
+  const handleCancelUpload = () => {
+    abortUploadRef.current = true;
+    if (xhrRef.current) {
+      xhrRef.current.abort();
+      xhrRef.current = null;
+    }
+    if (activeUploadIdRef.current) {
+      fetch('/api/upload/abort', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uploadId: activeUploadIdRef.current })
+      }).catch(() => {});
+      activeUploadIdRef.current = null;
+    }
+    setIsUploading(false);
+    setUploadProgressMsg('');
+    setUploadPercent(0);
+    setUploadBytesMsg('');
+  };
+
+  // Chunked file upload supporting 350MB to 4GB+ long movies with real-time percentage
+  // By slicing large files into 8MB chunks, every request is well below Cloud Run's 32MB payload limit!
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('video/')) {
-      setUploadError('Please select a valid movie/video file (MP4, WEBM, MOV)');
+    if (!file.type.startsWith('video/') && !/\.(mp4|webm|ogg|mov|mkv|avi)$/i.test(file.name)) {
+      setUploadError('Please select a valid movie file (MP4, WEBM, MOV, MKV)');
+      e.target.value = '';
+      return;
+    }
+
+    const MAX_SIZE = 4 * 1024 * 1024 * 1024; // 4GB max
+    if (file.size > MAX_SIZE) {
+      setUploadError(`File is too large (${formatBytes(file.size)}). Maximum supported movie size is 4GB.`);
+      e.target.value = '';
       return;
     }
 
     setIsUploading(true);
-    setUploadProgressMsg('Uploading movie file...');
+    setUploadPercent(0);
+    setUploadBytesMsg(`0 B of ${formatBytes(file.size)}`);
+    setUploadProgressMsg(`Preparing upload for ${file.name}...`);
     setUploadError(null);
+    abortUploadRef.current = false;
+
+    // Use 8 MB chunks so that NO request ever exceeds Cloud Run's 32 MB limit!
+    // A 350 MB file becomes ~44 chunks of 8 MB each.
+    const CHUNK_SIZE = 8 * 1024 * 1024;
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activeUploadIdRef.current = uploadId;
+
+    let finalData: any = null;
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        if (abortUploadRef.current) {
+          throw new Error('Upload cancelled');
+        }
 
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
+        const start = chunkIndex * CHUNK_SIZE;
+        const end = Math.min(file.size, start + CHUNK_SIZE);
+        const chunkBlob = file.slice(start, end);
 
-      if (!res.ok) {
-        throw new Error(`Upload failed (${res.status})`);
+        // Upload single chunk with retry up to 3 times
+        let attempt = 0;
+        let chunkSuccess = false;
+        let lastErr: any = null;
+
+        while (attempt < 3 && !chunkSuccess) {
+          if (abortUploadRef.current) throw new Error('Upload cancelled');
+          attempt++;
+
+          try {
+            finalData = await new Promise<any>((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhrRef.current = xhr;
+
+              xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable && !abortUploadRef.current) {
+                  const currentChunkLoaded = event.loaded;
+                  const totalLoaded = start + currentChunkLoaded;
+                  const pct = Math.min(99, Math.round((totalLoaded / file.size) * 100));
+                  setUploadPercent(pct);
+                  setUploadBytesMsg(`${formatBytes(totalLoaded)} of ${formatBytes(file.size)}`);
+                  setUploadProgressMsg(
+                    `Uploading ${file.name} • Part ${chunkIndex + 1}/${totalChunks} (${pct}%)`
+                  );
+                }
+              };
+
+              xhr.onload = () => {
+                xhrRef.current = null;
+                const contentType = xhr.getResponseHeader('content-type') || '';
+                const isJson = contentType.includes('application/json');
+
+                if (xhr.status >= 200 && xhr.status < 300) {
+                  if (isJson) {
+                    try {
+                      const res = JSON.parse(xhr.responseText);
+                      resolve(res);
+                    } catch (e) {
+                      reject(new Error('Invalid JSON from server on chunk ' + chunkIndex));
+                    }
+                  } else {
+                    resolve({ success: true });
+                  }
+                } else {
+                  let errMsg = `Server error (${xhr.status})`;
+                  if (isJson) {
+                    try {
+                      const res = JSON.parse(xhr.responseText);
+                      if (res.error) errMsg = res.error;
+                    } catch (_) {}
+                  } else if (xhr.responseText) {
+                    const clean = xhr.responseText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                    if (clean.includes('413') || clean.includes('Too Large')) {
+                      errMsg = 'Network payload limit exceeded. Retrying chunk...';
+                    } else {
+                      errMsg = clean.slice(0, 100) || errMsg;
+                    }
+                  }
+                  reject(new Error(errMsg));
+                }
+              };
+
+              xhr.onerror = () => {
+                xhrRef.current = null;
+                reject(new Error(`Network error uploading part ${chunkIndex + 1}/${totalChunks}`));
+              };
+
+              xhr.onabort = () => {
+                xhrRef.current = null;
+                reject(new Error('Upload cancelled'));
+              };
+
+              xhr.open('POST', '/api/upload/chunk', true);
+              const formData = new FormData();
+              formData.append('chunk', chunkBlob, `chunk_${chunkIndex}`);
+              formData.append('uploadId', uploadId);
+              formData.append('chunkIndex', String(chunkIndex));
+              formData.append('totalChunks', String(totalChunks));
+              formData.append('fileName', file.name);
+              formData.append('fileSize', String(file.size));
+              formData.append('fileType', file.type);
+              xhr.send(formData);
+            });
+
+            chunkSuccess = true;
+          } catch (err: any) {
+            lastErr = err;
+            if (abortUploadRef.current || err.message === 'Upload cancelled') {
+              throw err;
+            }
+            // Wait 500ms before retrying chunk
+            await new Promise((r) => setTimeout(r, 500));
+          }
+        }
+
+        if (!chunkSuccess) {
+          throw lastErr || new Error(`Failed to upload part ${chunkIndex + 1}/${totalChunks}`);
+        }
       }
 
-      const data = await res.json();
+      if (abortUploadRef.current) return;
+
+      if (!finalData || !finalData.url) {
+        throw new Error('Upload completed, but server did not return the video URL.');
+      }
+
+      setUploadPercent(100);
+      setUploadProgressMsg('Upload complete! Preparing playback...');
+
+      const newVideoItem: VideoItem = {
+        id: `vid-${Date.now()}`,
+        url: finalData.url,
+        title: file.name,
+        uploadedBy: currentUser,
+        timestamp: Date.now()
+      };
+      const currentPl = movieState.playlist || [];
+      const updatedPlaylist = [newVideoItem, ...currentPl.filter((v) => v.url !== finalData.url)];
+
+      pendingSeekTimeRef.current = 0;
       broadcastMovieAction('change_movie', {
-        mediaUrl: data.url,
+        mediaUrl: finalData.url,
         mediaTitle: file.name,
         uploadedBy: currentUser,
+        currentTime: 0,
+        isPlaying: true,
+        playlist: updatedPlaylist
+      });
+
+      socket?.emit('movie_action', {
+        roomId,
+        type: 'add_movie',
+        mediaUrl: finalData.url,
+        mediaTitle: file.name,
+        uploadedBy: currentUser,
+        playlistItem: newVideoItem,
+        playlist: updatedPlaylist,
         currentTime: 0,
         isPlaying: true
       });
     } catch (err: any) {
-      setUploadError(err.message || 'Movie upload failed. Please try again.');
+      if (err.message !== 'Upload cancelled') {
+        setUploadError(err.message || 'Upload failed. Please try again.');
+      }
     } finally {
       setIsUploading(false);
       setUploadProgressMsg('');
+      activeUploadIdRef.current = null;
       e.target.value = '';
     }
   };
@@ -390,10 +774,34 @@ export default function MoviePlayer({
     const url = urlInput.trim();
     if (!url) return;
 
+    const title = 'Shared Web Video';
+    const newVideoItem: VideoItem = {
+      id: `vid-${Date.now()}`,
+      url,
+      title,
+      uploadedBy: currentUser,
+      timestamp: Date.now()
+    };
+    const currentPl = movieState.playlist || [];
+    const updatedPlaylist = [newVideoItem, ...currentPl.filter(v => v.url !== url)];
+
     broadcastMovieAction('change_movie', {
       mediaUrl: url,
-      mediaTitle: 'Shared Web Video',
+      mediaTitle: title,
       uploadedBy: currentUser,
+      currentTime: 0,
+      isPlaying: true,
+      playlist: updatedPlaylist
+    });
+
+    socket?.emit('movie_action', {
+      roomId,
+      type: 'add_movie',
+      mediaUrl: url,
+      mediaTitle: title,
+      uploadedBy: currentUser,
+      playlistItem: newVideoItem,
+      playlist: updatedPlaylist,
       currentTime: 0,
       isPlaying: true
     });
@@ -506,6 +914,17 @@ export default function MoviePlayer({
             </button>
           )}
 
+          {/* Delete Current Movie Button */}
+          {movieState.mediaUrl && (
+            <button
+              onClick={() => handleDeleteMovie(movieState.mediaUrl)}
+              className="p-2 rounded-xl bg-slate-800/80 text-rose-400 hover:text-white hover:bg-rose-600/80 border border-slate-700/60 transition-colors shadow-sm"
+              title="Delete current movie from room and storage"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           {/* Fullscreen Button */}
           <button
             onClick={toggleFullscreen}
@@ -517,6 +936,35 @@ export default function MoviePlayer({
         </div>
       </div>
 
+      {/* Upload Progress Bar Banner (Shows exact percent and MB uploaded for large 2GB+ movies) */}
+      {isUploading && (
+        <div className="px-4 py-2.5 bg-indigo-950/95 border-b border-indigo-500/30 flex items-center justify-between gap-3 text-xs z-30 animate-in fade-in">
+          <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+            <Loader2 className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between text-[11px] mb-1">
+                <span className="text-white font-medium truncate">{uploadProgressMsg}</span>
+                <span className="text-indigo-300 font-mono font-bold shrink-0 ml-2">
+                  {uploadPercent}% {uploadBytesMsg && `(${uploadBytesMsg})`}
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-indigo-500 to-pink-500 transition-all duration-200"
+                  style={{ width: `${uploadPercent}%` }}
+                />
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleCancelUpload}
+            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-medium border border-slate-700 shrink-0"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* Main Video Viewport */}
       <div className="relative flex-1 min-h-0 bg-black flex items-center justify-center overflow-hidden">
         <video
@@ -524,11 +972,12 @@ export default function MoviePlayer({
           src={movieState.mediaUrl}
           className="w-full h-full max-h-[65vh] lg:max-h-full object-contain"
           playsInline
+          preload="auto"
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
           onWaiting={() => setIsBuffering(true)}
           onPlaying={() => setIsBuffering(false)}
-          onCanPlay={() => setIsBuffering(false)}
+          onCanPlay={handleCanPlay}
           onClick={handleTogglePlay}
         />
 
@@ -587,7 +1036,7 @@ export default function MoviePlayer({
       <div className="px-4 py-3 bg-slate-900/95 border-t border-slate-800/80 z-20 space-y-2 shrink-0">
         {/* Timeline scrubber */}
         <div className="flex items-center space-x-3">
-          <span className="text-[11px] font-mono text-slate-400 min-w-[40px]">
+          <span className="text-[11px] font-mono text-slate-400 min-w-[62px]">
             {formatTime(displayTime)}
           </span>
           <div className="flex-1 relative flex items-center">
@@ -595,7 +1044,7 @@ export default function MoviePlayer({
               type="range"
               min={0}
               max={duration || 100}
-              step={0.1}
+              step={duration > 3600 ? 1 : 0.25}
               value={displayTime}
               onMouseDown={() => setIsSeeking(true)}
               onTouchStart={() => setIsSeeking(true)}
@@ -605,7 +1054,7 @@ export default function MoviePlayer({
               className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 focus:outline-none"
             />
           </div>
-          <span className="text-[11px] font-mono text-slate-400 min-w-[40px] text-right">
+          <span className="text-[11px] font-mono text-slate-400 min-w-[62px] text-right">
             {formatTime(duration)}
           </span>
         </div>
@@ -658,6 +1107,99 @@ export default function MoviePlayer({
           <div className="text-xs text-slate-400 font-medium">
             <span>{participants.length} watching movie together</span>
           </div>
+        </div>
+      </div>
+
+      {/* Room Movie Playlist & Media Library */}
+      <div className="px-4 py-2.5 bg-slate-950/80 border-t border-slate-800/80 shrink-0">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center space-x-2">
+            <Film className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="text-xs font-semibold text-slate-300">Room Video Playlist</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+              {(movieState.playlist || []).length > 0 ? (movieState.playlist || []).length : 1} items
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-400 hidden sm:inline">
+            Click to switch synced movie • Delete with trash button
+          </span>
+        </div>
+
+        {/* Playlist Horizontal Cards Row */}
+        <div className="flex items-center space-x-2.5 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-700">
+          {(!movieState.playlist || movieState.playlist.length === 0) && (
+            <div className="relative group shrink-0">
+              <button
+                type="button"
+                className="flex items-center space-x-2.5 px-3 py-1.5 rounded-xl bg-indigo-950/40 border border-indigo-500/50 text-left min-w-[200px]"
+              >
+                <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 shadow-sm">
+                  <Film className="w-3.5 h-3.5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium text-white truncate">{movieState.mediaTitle || 'Big Buck Bunny'}</p>
+                  <span className="text-[10px] text-indigo-400 font-semibold flex items-center gap-1">
+                    <Radio className="w-2.5 h-2.5 animate-pulse" /> Playing
+                  </span>
+                </div>
+              </button>
+            </div>
+          )}
+
+          {(movieState.playlist || []).map((video) => {
+            const isActive = video.url === movieState.mediaUrl;
+            return (
+              <div key={video.id || video.url} className="relative group shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    broadcastMovieAction('change_movie', {
+                      mediaUrl: video.url,
+                      mediaTitle: video.title,
+                      uploadedBy: video.uploadedBy,
+                      currentTime: 0,
+                      isPlaying: true
+                    });
+                  }}
+                  className={`flex items-center space-x-2.5 px-3 py-1.5 rounded-xl border text-left transition-all min-w-[200px] max-w-[240px] ${
+                    isActive
+                      ? 'bg-indigo-950/50 border-indigo-500 ring-1 ring-indigo-500/50 shadow-md'
+                      : 'bg-slate-800/70 border-slate-700/60 hover:border-slate-600 opacity-80 hover:opacity-100'
+                  }`}
+                >
+                  <div
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                      isActive ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-700/60 text-slate-300'
+                    }`}
+                  >
+                    <Film className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-white truncate">{video.title}</p>
+                    <div className="flex items-center space-x-1.5 text-[10px] text-slate-400">
+                      {isActive ? (
+                        <span className="text-indigo-400 font-semibold flex items-center gap-1">
+                          <Radio className="w-2.5 h-2.5 animate-pulse" /> Playing
+                        </span>
+                      ) : (
+                        <span className="truncate">{video.uploadedBy || 'Uploaded video'}</span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+
+                {/* Delete Video Button */}
+                <button
+                  type="button"
+                  onClick={(e) => handleDeleteMovie(video.url, e)}
+                  className="absolute -top-1.5 -right-1.5 p-1 bg-slate-900/95 hover:bg-rose-600 text-rose-300 hover:text-white rounded-full border border-slate-700 shadow-md opacity-0 group-hover:opacity-100 transition-all z-20"
+                  title="Delete video from room and disk"
+                >
+                  <Trash2 className="w-2.5 h-2.5" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 

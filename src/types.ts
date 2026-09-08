@@ -25,6 +25,16 @@ export interface MediaState {
   imageZoom?: number;
 }
 
+export interface VideoItem {
+  id: string;
+  url: string;
+  title: string;
+  uploadedBy?: string;
+  thumbnail?: string;
+  timestamp?: number;
+  duration?: number;
+}
+
 export interface MovieState {
   mediaUrl: string;
   mediaType: 'video';
@@ -34,6 +44,7 @@ export interface MovieState {
   mediaTitle: string;
   uploadedBy?: string;
   serverTimestamp: number;
+  playlist?: VideoItem[];
 }
 
 export interface ImageItem {
@@ -56,7 +67,7 @@ export interface ImageState {
 
 export interface MovieActionPayload {
   roomId: string;
-  type: 'play' | 'pause' | 'seek' | 'change_movie' | 'heartbeat';
+  type: 'play' | 'pause' | 'seek' | 'change_movie' | 'heartbeat' | 'add_movie' | 'delete_movie';
   currentTime: number;
   isPlaying: boolean;
   mediaUrl: string;
@@ -65,11 +76,14 @@ export interface MovieActionPayload {
   uploadedBy?: string;
   serverTimestamp: number;
   senderId?: string;
+  playlist?: VideoItem[];
+  playlistItem?: VideoItem;
+  deletedMediaUrl?: string;
 }
 
 export interface ImageActionPayload {
   roomId: string;
-  type: 'select_image' | 'zoom' | 'add_image';
+  type: 'select_image' | 'zoom' | 'add_image' | 'delete_image';
   activeImageUrl: string;
   activeImageTitle: string;
   imageZoom?: number;
@@ -77,6 +91,7 @@ export interface ImageActionPayload {
   uploadedBy?: string;
   serverTimestamp: number;
   senderId?: string;
+  deletedImageUrl?: string;
 }
 
 export interface MediaActionPayload {

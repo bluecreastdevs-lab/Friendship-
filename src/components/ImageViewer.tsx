@@ -14,7 +14,8 @@ import {
   Sparkles,
   Loader2,
   X,
-  User
+  User,
+  Trash2
 } from 'lucide-react';
 import { ImageState, ImageItem, Participant, ImageActionPayload } from '../types';
 import { MEDIA_PRESETS } from '../presets';
@@ -80,6 +81,14 @@ export default function ImageViewer({
         });
         setLocalZoom(packet.imageZoom ?? 1);
         setImageLoadError(false);
+      } else if (packet.type === 'delete_image') {
+        const updatedGallery = packet.gallery || (imageState.gallery || []).filter((i) => i.url !== packet.deletedImageUrl);
+        onImageStateChange({
+          activeImageUrl: packet.activeImageUrl,
+          activeImageTitle: packet.activeImageTitle,
+          gallery: updatedGallery
+        });
+        setImageLoadError(false);
       }
     };
 
@@ -88,6 +97,62 @@ export default function ImageViewer({
       socket.off('image_action', handleImageAction);
     };
   }, [socket, onImageStateChange, imageState.gallery]);
+
+  // Delete image from gallery and storage
+  const handleDeleteImage = async (targetUrl: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (!targetUrl) return;
+
+    // Call deletion API endpoint for filesystem cleanup
+    try {
+      await fetch('/api/media/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, url: targetUrl, mediaType: 'image' })
+      });
+    } catch (err) {
+      console.error('Delete request failed', err);
+    }
+
+    // Prepare updated gallery locally
+    const currentGal = imageState.gallery || [];
+    const updatedGallery = currentGal.filter((img) => img.url !== targetUrl);
+    let nextActive = imageState.activeImageUrl;
+    let nextTitle = imageState.activeImageTitle;
+    let nextUploadedBy = imageState.uploadedBy;
+
+    if (imageState.activeImageUrl === targetUrl) {
+      if (updatedGallery.length > 0) {
+        nextActive = updatedGallery[0].url;
+        nextTitle = updatedGallery[0].title;
+        nextUploadedBy = updatedGallery[0].uploadedBy;
+      } else {
+        nextActive = 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1600&auto=format&fit=crop&q=80';
+        nextTitle = 'Deep Cosmic Nebula (Space 4K)';
+        nextUploadedBy = 'System';
+      }
+    }
+
+    onImageStateChange({
+      activeImageUrl: nextActive,
+      activeImageTitle: nextTitle,
+      uploadedBy: nextUploadedBy,
+      gallery: updatedGallery
+    });
+
+    socket?.emit('image_action', {
+      roomId,
+      type: 'delete_image',
+      activeImageUrl: nextActive,
+      activeImageTitle: nextTitle,
+      uploadedBy: nextUploadedBy,
+      deletedImageUrl: targetUrl,
+      gallery: updatedGallery
+    });
+  };
 
   // Broadcast zoom changes across peers
   const handleZoomChange = (newZoom: number) => {
@@ -383,6 +448,17 @@ export default function ImageViewer({
             </button>
           )}
 
+          {/* Delete Active Image Button */}
+          {imageState.activeImageUrl && (
+            <button
+              onClick={() => handleDeleteImage(imageState.activeImageUrl)}
+              className="p-2 rounded-xl bg-slate-800/80 text-rose-400 hover:text-white hover:bg-rose-600/80 border border-slate-700/60 transition-colors shadow-sm"
+              title="Delete current image from room and storage"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           {/* Fullscreen Button */}
           <button
             onClick={toggleFullscreen}
@@ -520,27 +596,41 @@ export default function ImageViewer({
           {gallery.map((item) => {
             const isActive = item.url === imageState.activeImageUrl;
             return (
-              <button
+              <div
                 key={item.id || item.url}
-                onClick={() => handleSelectImage(item)}
-                className={`relative group shrink-0 rounded-xl overflow-hidden border-2 transition-all duration-200 ${
-                  isActive
-                    ? 'border-pink-500 ring-2 ring-pink-500/40 scale-105'
-                    : 'border-slate-800 hover:border-slate-600 opacity-70 hover:opacity-100'
-                }`}
+                className="relative group shrink-0"
               >
-                <img
-                  src={item.thumbnail || item.url}
-                  alt={item.title}
-                  referrerPolicy="no-referrer"
-                  className="w-16 h-12 object-cover"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1">
-                  <span className="text-[9px] text-white truncate max-w-full font-medium">
-                    {item.title}
-                  </span>
-                </div>
-              </button>
+                <button
+                  onClick={() => handleSelectImage(item)}
+                  className={`relative block rounded-xl overflow-hidden border-2 transition-all duration-200 ${
+                    isActive
+                      ? 'border-pink-500 ring-2 ring-pink-500/40 scale-105'
+                      : 'border-slate-800 hover:border-slate-600 opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  <img
+                    src={item.thumbnail || item.url}
+                    alt={item.title}
+                    referrerPolicy="no-referrer"
+                    className="w-16 h-12 object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1">
+                    <span className="text-[9px] text-white truncate max-w-full font-medium">
+                      {item.title}
+                    </span>
+                  </div>
+                </button>
+
+                {/* Delete Thumbnail Button */}
+                <button
+                  type="button"
+                  onClick={(e) => handleDeleteImage(item.url, e)}
+                  className="absolute -top-1.5 -right-1.5 p-1 bg-slate-900/90 hover:bg-rose-600 text-rose-300 hover:text-white rounded-full border border-slate-700 shadow-md opacity-0 group-hover:opacity-100 transition-all z-20"
+                  title="Delete image from lounge"
+                >
+                  <Trash2 className="w-2.5 h-2.5" />
+                </button>
+              </div>
             );
           })}
         </div>
