@@ -5,7 +5,7 @@ import MoviePlayer from './components/MoviePlayer';
 import ImageViewer from './components/ImageViewer';
 import ChatDrawer from './components/ChatDrawer';
 import VoiceCall from './components/VoiceCall';
-import { Film, Image as ImageIcon, Copy, Check, Users, ExternalLink, Sparkles } from 'lucide-react';
+import { Film, Image as ImageIcon, Copy, Check, Users, ExternalLink, Sparkles, Share2, X, MessageCircle } from 'lucide-react';
 import { Participant, Message, MovieState, ImageState, MovieActionPayload, ImageActionPayload } from './types';
 
 const AVATAR_COLORS = ['#6366f1', '#ec4899', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6'];
@@ -13,9 +13,16 @@ const AVATAR_COLORS = ['#6366f1', '#ec4899', '#8b5cf6', '#10b981', '#f59e0b', '#
 export default function App() {
   const [inLounge, setInLounge] = useState(false);
   const [userName, setUserName] = useState('');
-  const [roomId, setRoomId] = useState('lounge-101');
+  const [roomId, setRoomId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('room') || 'lounge-101';
+    }
+    return 'lounge-101';
+  });
   const [avatarColor, setAvatarColor] = useState(AVATAR_COLORS[0]);
   const [copiedRoom, setCopiedRoom] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   // Tab state: 'movie' vs 'image'
   const [mediaTab, setMediaTab] = useState<'movie' | 'image'>('movie');
@@ -218,10 +225,26 @@ export default function App() {
     socketRef.current?.emit('toggle-mic', { roomId, isMuted });
   };
 
+  const getInviteLink = () => {
+    let origin = 'https://ais-dev-iqypts7vxy6nzlbcyeqlyx-391836300496.asia-southeast1.run.app';
+    if (typeof window !== 'undefined') {
+      try {
+        if (window.location.origin && window.location.origin !== 'null' && !window.location.origin.includes('localhost')) {
+          origin = window.location.origin;
+        }
+      } catch (_) {}
+    }
+    return `${origin}?room=${encodeURIComponent(roomId)}`;
+  };
+
   const handleCopyRoom = () => {
-    navigator.clipboard.writeText(roomId);
+    const inviteLink = getInviteLink();
+    try {
+      navigator.clipboard.writeText(inviteLink);
+    } catch (_) {}
     setCopiedRoom(true);
-    setTimeout(() => setCopiedRoom(false), 2000);
+    setShowShareModal(true);
+    setTimeout(() => setCopiedRoom(false), 2500);
   };
 
   // Open the image tab in a brand new browser tab
@@ -354,7 +377,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Center Room Indicator */}
+        {/* Center Room Indicator & Share Button */}
         <div className="flex items-center space-x-1.5 shrink-0">
           <button
             onClick={handleCopyRoom}
@@ -368,6 +391,15 @@ export default function App() {
             ) : (
               <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 shrink-0" />
             )}
+          </button>
+
+          <button
+            onClick={() => setShowShareModal(true)}
+            className="flex items-center space-x-1.5 px-2 sm:px-3 py-1 sm:py-1.5 bg-indigo-600/90 hover:bg-indigo-500 rounded-xl text-xs font-semibold text-white transition-all shadow-sm shadow-indigo-600/20"
+            title="Invite friends with shareable link"
+          >
+            <Share2 className="w-3.5 h-3.5 text-indigo-100 shrink-0" />
+            <span className="hidden sm:inline">Invite</span>
           </button>
         </div>
 
@@ -475,6 +507,95 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Share / Invite Friends Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="relative w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 text-left">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                  <Share2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Invite Friends to SyncSpace</h3>
+                  <p className="text-xs text-slate-400">Lounge ID: <span className="font-mono font-semibold text-indigo-400">{roomId}</span></p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowShareModal(false)}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-300">Direct Shareable Link</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={getInviteLink()}
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                  className="flex-1 px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 font-mono select-all focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  onClick={() => {
+                    try { navigator.clipboard.writeText(getInviteLink()); } catch (_) {}
+                    setCopiedRoom(true);
+                    setTimeout(() => setCopiedRoom(false), 2000);
+                  }}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors shrink-0 shadow-md shadow-indigo-600/25"
+                >
+                  {copiedRoom ? <Check className="w-4 h-4 text-emerald-300" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedRoom ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+              <a
+                href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Hey! Join my SyncSpace lounge to watch movies, view photos, and talk in sync: ${getInviteLink()}`)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center space-x-2 transition-colors shadow-md"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span>Share via WhatsApp</span>
+              </a>
+
+              <button
+                onClick={() => {
+                  if (typeof navigator !== 'undefined' && navigator.share) {
+                    navigator.share({
+                      title: 'Join my SyncSpace Lounge',
+                      text: `Join my SyncSpace lounge: ${roomId}`,
+                      url: getInviteLink()
+                    }).catch(() => {});
+                  } else {
+                    navigator.clipboard.writeText(getInviteLink());
+                    setCopiedRoom(true);
+                    setTimeout(() => setCopiedRoom(false), 2000);
+                  }
+                }}
+                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center justify-center space-x-2 border border-slate-700 transition-colors"
+              >
+                <Share2 className="w-4 h-4 text-indigo-400" />
+                <span>System Share</span>
+              </button>
+            </div>
+
+            <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3 text-[11px] text-slate-400 space-y-1">
+              <p className="flex items-center gap-1.5 text-slate-300 font-medium">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span>Instant Multiplayer Access:</span>
+              </p>
+              <p>Friends on mobile or desktop opening this link will immediately enter this synchronized lounge with shared movie playback, photo zooming, live voice chat, and real-time messaging.</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
