@@ -4,7 +4,6 @@ import { Server } from "socket.io";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import { createServer as createViteServer } from "vite";
 
 async function startServer() {
   const app = express();
@@ -912,8 +911,8 @@ async function startServer() {
     });
   });
 
-  // API health check & stored rooms info
-  app.get("/api/health", (req, res) => {
+  // API health check & stored rooms info (supports /healthz and /api/health for Cloud Run probes)
+  app.get(["/healthz", "/api/health"], (req, res) => {
     res.json({ status: "ok", activeRooms: rooms.size });
   });
 
@@ -1214,17 +1213,26 @@ async function startServer() {
     } catch (_) {}
   }, 30 * 60 * 1000);
 
-  // Vite middleware for development or static serving for production
-  const distPath = path.join(process.cwd(), 'dist');
-  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+  // Production static file serving vs Development Vite middleware
+  const distPath = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))
+    ? path.join(process.cwd(), 'dist')
+    : (typeof __dirname !== 'undefined' && fs.existsSync(path.join(__dirname, 'index.html')))
+      ? __dirname
+      : path.join(process.cwd(), 'dist');
 
-  if (process.env.NODE_ENV !== "production" || !hasDist) {
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+  const isProduction = process.env.NODE_ENV === "production" || (hasDist && process.env.NODE_ENV !== "development");
+
+  if (!isProduction) {
+    // Dynamically load Vite only in development mode
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
+    // Production mode: serve pre-built static assets from dist
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -1236,6 +1244,13 @@ async function startServer() {
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
   server.requestTimeout = 1800000;
+
+  // Handle graceful shutdown in Cloud Run container lifecycle
+  process.on('SIGTERM', () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  });
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`SyncSpace server running on http://0.0.0.0:${PORT}`);
