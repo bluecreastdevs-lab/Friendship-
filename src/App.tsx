@@ -226,13 +226,9 @@ export default function App() {
   };
 
   const getInviteLink = () => {
-    let origin = 'https://ais-dev-iqypts7vxy6nzlbcyeqlyx-391836300496.asia-southeast1.run.app';
-    if (typeof window !== 'undefined') {
-      try {
-        if (window.location.origin && window.location.origin !== 'null' && !window.location.origin.includes('localhost')) {
-          origin = window.location.origin;
-        }
-      } catch (_) {}
+    let origin = '';
+    if (typeof window !== 'undefined' && window.location) {
+      origin = window.location.origin;
     }
     return `${origin}?room=${encodeURIComponent(roomId)}`;
   };

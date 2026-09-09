@@ -17,7 +17,10 @@ import {
   Loader2,
   ExternalLink,
   Radio,
-  Trash2
+  Trash2,
+  AlertCircle,
+  Download,
+  Wrench
 } from 'lucide-react';
 import { MovieState, Participant, MovieActionPayload, VideoItem } from '../types';
 import { MEDIA_PRESETS } from '../presets';
@@ -86,6 +89,8 @@ export default function MoviePlayer({
   const [isMutedLocal, setIsMutedLocal] = useState<boolean>(false);
   const [isBuffering, setIsBuffering] = useState<boolean>(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState<boolean>(false);
+  const [videoError, setVideoError] = useState<{ code?: number; message: string } | null>(null);
+  const [isOptimizing, setIsOptimizing] = useState<boolean>(false);
 
   // Modals & upload states (supports large movies of 2GB+ / 2:30hr)
   const [isUploading, setIsUploading] = useState<boolean>(false);
@@ -104,6 +109,7 @@ export default function MoviePlayer({
       lastMediaUrlRef.current = movieState.mediaUrl;
       pendingSeekTimeRef.current = movieState.currentTime || 0;
       setDisplayTime(movieState.currentTime || 0);
+      setVideoError(null);
     }
   }, [movieState.mediaUrl, movieState.currentTime]);
 
@@ -522,6 +528,7 @@ export default function MoviePlayer({
 
   const handleCanPlay = () => {
     setIsBuffering(false);
+    setVideoError(null);
     const el = videoRef.current;
     if (el && pendingSeekTimeRef.current !== null) {
       try {
@@ -529,6 +536,79 @@ export default function MoviePlayer({
         setDisplayTime(pendingSeekTimeRef.current);
       } catch (_) {}
       pendingSeekTimeRef.current = null;
+    }
+  };
+
+  const handleVideoError = () => {
+    setIsBuffering(false);
+    const err = videoRef.current?.error;
+    let msg = 'Unable to stream this media file.';
+    if (err) {
+      switch (err.code) {
+        case 1:
+          msg = 'Video playback was aborted by client.';
+          break;
+        case 2:
+          msg = 'Network connection dropped while streaming video chunks.';
+          break;
+        case 3:
+          msg = 'Video decoding failed. The video format or codec might not be supported by your browser.';
+          break;
+        case 4:
+          msg = 'This video format or codec is not supported by your browser (e.g. MKV or HEVC).';
+          break;
+        default:
+          msg = err.message || 'Stream loading error.';
+      }
+    }
+    setVideoError({ code: err?.code, message: msg });
+  };
+
+  const handleRetryVideo = () => {
+    setVideoError(null);
+    setIsBuffering(true);
+    const el = videoRef.current;
+    if (el) {
+      const src = el.src;
+      el.src = '';
+      el.load();
+      el.src = src;
+      el.load();
+      el.play().catch(() => {});
+    }
+  };
+
+  const handleOptimizeVideo = async () => {
+    if (!movieState.mediaUrl || isOptimizing) return;
+    setIsOptimizing(true);
+    try {
+      const res = await fetch('/api/media/optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: movieState.mediaUrl })
+      });
+      const data = await res.json();
+      if (res.ok && data.optimizedUrl) {
+        setVideoError(null);
+        broadcastMovieAction('change_movie', {
+          mediaUrl: data.optimizedUrl,
+          mediaTitle: (movieState.mediaTitle || 'Video') + ' (Web Optimized)',
+          currentTime: 0,
+          isPlaying: true
+        });
+        onMovieStateChange({
+          mediaUrl: data.optimizedUrl,
+          mediaTitle: (movieState.mediaTitle || 'Video') + ' (Web Optimized)',
+          currentTime: 0,
+          isPlaying: true
+        });
+      } else {
+        alert(data.error || 'Failed to optimize video for web.');
+      }
+    } catch (err: any) {
+      alert('Error during video optimization: ' + (err.message || 'Network error'));
+    } finally {
+      setIsOptimizing(false);
     }
   };
 
@@ -597,12 +677,30 @@ export default function MoviePlayer({
     setUploadError(null);
     abortUploadRef.current = false;
 
-    // Use 8 MB chunks so that NO request ever exceeds Cloud Run's 32 MB limit!
-    // A 350 MB file becomes ~44 chunks of 8 MB each.
-    const CHUNK_SIZE = 8 * 1024 * 1024;
+    // Adaptive chunk sizing for 2.5GB+ movies:
+    // Files > 1.5GB use 6MB chunks to reduce HTTP request count by 60% while staying well under proxy limits
+    const CHUNK_SIZE =
+      file.size > 1.5 * 1024 * 1024 * 1024
+        ? 6 * 1024 * 1024
+        : Math.round(2.5 * 1024 * 1024);
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     activeUploadIdRef.current = uploadId;
+
+    // Helper to verify if chunk was already received and written on server
+    const checkChunkOnServer = async (upId: string, idx: number, expectedSize: number) => {
+      try {
+        const res = await fetch(
+          `/api/upload/chunk-status?uploadId=${encodeURIComponent(upId)}&chunkIndex=${idx}&expectedSize=${expectedSize}`,
+          { cache: 'no-store' }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          return !!data.exists;
+        }
+      } catch (_) {}
+      return false;
+    };
 
     let finalData: any = null;
 
@@ -612,23 +710,52 @@ export default function MoviePlayer({
           throw new Error('Upload cancelled');
         }
 
+        const isLastChunk = chunkIndex === totalChunks - 1;
         const start = chunkIndex * CHUNK_SIZE;
         const end = Math.min(file.size, start + CHUNK_SIZE);
         const chunkBlob = file.slice(start, end);
 
-        // Upload single chunk with retry up to 3 times
+        // Upload single chunk with retry up to 5 times
         let attempt = 0;
         let chunkSuccess = false;
         let lastErr: any = null;
 
-        while (attempt < 3 && !chunkSuccess) {
+        // Check if chunk is already stored on server (e.g. from previous attempt)
+        const alreadyOnServer = await checkChunkOnServer(uploadId, chunkIndex, chunkBlob.size);
+        if (alreadyOnServer) {
+          chunkSuccess = true;
+          const totalLoaded = Math.min(file.size, end);
+          const pct = Math.min(99, Math.round((totalLoaded / file.size) * 100));
+          setUploadPercent(pct);
+          setUploadBytesMsg(`${formatBytes(totalLoaded)} of ${formatBytes(file.size)}`);
+        }
+
+        while (attempt < 5 && !chunkSuccess) {
           if (abortUploadRef.current) throw new Error('Upload cancelled');
           attempt++;
+
+          if (attempt > 1) {
+            setUploadProgressMsg(
+              `Reconnecting: Part ${chunkIndex + 1}/${totalChunks} (attempt ${attempt}/5)...`
+            );
+            // Progressive exponential backoff
+            const delay = Math.min(1000 * Math.pow(1.5, attempt - 1), 5000);
+            await new Promise((r) => setTimeout(r, delay));
+
+            // Check again if server received it despite network drop
+            const recheck = await checkChunkOnServer(uploadId, chunkIndex, chunkBlob.size);
+            if (recheck) {
+              chunkSuccess = true;
+              break;
+            }
+          }
 
           try {
             finalData = await new Promise<any>((resolve, reject) => {
               const xhr = new XMLHttpRequest();
               xhrRef.current = xhr;
+              // Allow extra time for final chunk assembly and faststart optimization of 2.5GB movies
+              xhr.timeout = isLastChunk ? 180000 : 90000;
 
               xhr.upload.onprogress = (event) => {
                 if (event.lengthComputable && !abortUploadRef.current) {
@@ -637,9 +764,13 @@ export default function MoviePlayer({
                   const pct = Math.min(99, Math.round((totalLoaded / file.size) * 100));
                   setUploadPercent(pct);
                   setUploadBytesMsg(`${formatBytes(totalLoaded)} of ${formatBytes(file.size)}`);
-                  setUploadProgressMsg(
-                    `Uploading ${file.name} • Part ${chunkIndex + 1}/${totalChunks} (${pct}%)`
-                  );
+                  if (isLastChunk && currentChunkLoaded >= event.total * 0.95) {
+                    setUploadProgressMsg(`Finalizing & optimizing ${file.name} for instant streaming...`);
+                  } else {
+                    setUploadProgressMsg(
+                      `Uploading ${file.name} • Part ${chunkIndex + 1}/${totalChunks} (${pct}%)`
+                    );
+                  }
                 }
               };
 
@@ -680,7 +811,12 @@ export default function MoviePlayer({
 
               xhr.onerror = () => {
                 xhrRef.current = null;
-                reject(new Error(`Network error uploading part ${chunkIndex + 1}/${totalChunks}`));
+                reject(new Error(`Network glitch on part ${chunkIndex + 1}/${totalChunks}`));
+              };
+
+              xhr.ontimeout = () => {
+                xhrRef.current = null;
+                reject(new Error(`Timeout on part ${chunkIndex + 1}/${totalChunks}`));
               };
 
               xhr.onabort = () => {
@@ -694,23 +830,18 @@ export default function MoviePlayer({
                 totalChunks: String(totalChunks),
                 fileName: file.name,
                 fileSize: String(file.size),
-                fileType: file.type || ''
+                fileType: file.type
               });
-
               xhr.open('POST', `/api/upload/chunk?${queryParams.toString()}`, true);
-              xhr.setRequestHeader('X-Upload-Id', uploadId);
-              xhr.setRequestHeader('X-Chunk-Index', String(chunkIndex));
-              xhr.setRequestHeader('X-Total-Chunks', String(totalChunks));
 
               const formData = new FormData();
-              // Append text metadata fields FIRST before the binary chunk
               formData.append('uploadId', uploadId);
               formData.append('chunkIndex', String(chunkIndex));
               formData.append('totalChunks', String(totalChunks));
               formData.append('fileName', file.name);
               formData.append('fileSize', String(file.size));
               formData.append('fileType', file.type);
-              formData.append('chunk', chunkBlob, `${uploadId}_part_${chunkIndex}`);
+              formData.append('chunk', chunkBlob, `part_${chunkIndex}.bin`);
               xhr.send(formData);
             });
 
@@ -720,8 +851,6 @@ export default function MoviePlayer({
             if (abortUploadRef.current || err.message === 'Upload cancelled') {
               throw err;
             }
-            // Wait 500ms before retrying chunk
-            await new Promise((r) => setTimeout(r, 500));
           }
         }
 
@@ -909,7 +1038,7 @@ export default function MoviePlayer({
             <span className="hidden sm:inline">{isUploading ? 'Uploading...' : 'Upload Video'}</span>
             <input
               type="file"
-              accept="video/mp4, video/webm, video/ogg, video/quicktime"
+              accept="video/mp4, video/webm, video/ogg, video/quicktime, video/x-matroska, .mp4, .mkv, .mov, .webm"
               className="hidden"
               onChange={handleFileUpload}
               disabled={isUploading}
@@ -986,19 +1115,92 @@ export default function MoviePlayer({
           src={movieState.mediaUrl}
           className="w-full h-full max-h-[65vh] lg:max-h-full object-contain"
           playsInline
-          preload="auto"
+          preload="metadata"
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
           onWaiting={() => setIsBuffering(true)}
-          onPlaying={() => setIsBuffering(false)}
+          onPlaying={() => {
+            setIsBuffering(false);
+            setVideoError(null);
+          }}
           onCanPlay={handleCanPlay}
           onClick={handleTogglePlay}
+          onError={handleVideoError}
         />
 
         {/* Buffering Indicator */}
-        {isBuffering && (
+        {isBuffering && !videoError && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-xs z-10">
             <Loader2 className="w-10 h-10 text-indigo-400 animate-spin" />
+          </div>
+        )}
+
+        {/* Video Playback / Format Error Overlay */}
+        {videoError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-6 z-25 text-center animate-in fade-in">
+            <div className="max-w-md w-full bg-slate-900 border border-slate-700/80 rounded-2xl p-5 shadow-2xl space-y-4">
+              <div className="w-12 h-12 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-white text-base font-bold">Video Playback Issue</h3>
+                <p className="text-xs text-slate-300 leading-relaxed">{videoError.message}</p>
+              </div>
+
+              <div className="flex flex-col gap-2 pt-1">
+                {movieState.mediaUrl?.startsWith('/uploads/') && (
+                  <button
+                    onClick={handleOptimizeVideo}
+                    disabled={isOptimizing}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/30 disabled:opacity-50"
+                  >
+                    {isOptimizing ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Wrench className="w-4 h-4" />
+                    )}
+                    <span>{isOptimizing ? 'Optimizing Video Stream...' : 'Auto-Optimize for Web Playback'}</span>
+                  </button>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleRetryVideo}
+                    className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry</span>
+                  </button>
+
+                  {movieState.mediaUrl && (
+                    <a
+                      href={movieState.mediaUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Direct URL</span>
+                    </a>
+                  )}
+
+                  {movieState.mediaUrl && (
+                    <a
+                      href={movieState.mediaUrl}
+                      download={movieState.mediaTitle || 'movie'}
+                      className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 transition-colors"
+                      title="Download full video file"
+                    >
+                      <Download className="w-4 h-4" />
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-400 border-t border-slate-800 pt-3">
+                💡 High-resolution movies over 2GB stream smoothest when encoded in standard <span className="text-indigo-300 font-medium">MP4 (H.264 + AAC)</span>.
+              </p>
+            </div>
           </div>
         )}
 

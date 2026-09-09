@@ -3,7 +3,9 @@ import http from "http";
 import { Server } from "socket.io";
 import path from "path";
 import fs from "fs";
+import { spawn } from "child_process";
 import multer from "multer";
+import { createServer as createViteServer } from "vite";
 
 async function startServer() {
   const app = express();
@@ -17,6 +19,18 @@ async function startServer() {
   });
 
   const PORT = 3000;
+
+  // Global CORS and preflight handling for web, mobile, and iframe cross-origin requests
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range, x-upload-id, x-chunk-index, x-total-chunks");
+    res.header("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+    next();
+  });
 
   // Enable JSON request body parsing
   app.use(express.json());
@@ -41,23 +55,9 @@ async function startServer() {
       try {
         const raw = fs.readFileSync(DB_FILE, "utf-8");
         const parsed = JSON.parse(raw);
-        const fileMtime = fs.statSync(DB_FILE).mtimeMs;
         for (const [roomId, roomData] of Object.entries(parsed as Record<string, any>)) {
-          const messages = Array.isArray(roomData.messages) ? roomData.messages.map((m: any) => {
-            if (typeof m.timestamp === "number" && !isNaN(m.timestamp)) {
-              return m;
-            }
-            const parsedTime = Date.parse(m.time);
-            const ts = !isNaN(parsedTime) ? parsedTime : fileMtime;
-            return {
-              ...m,
-              timestamp: ts
-            };
-          }) : [];
-
           map.set(roomId, {
             ...roomData,
-            messages,
             participants: new Map() // Ephemeral connected sockets
           });
         }
@@ -111,31 +111,19 @@ async function startServer() {
 
   const chunkStorage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, chunksDir),
-    filename: (req, file, cb) => {
-      let rawId =
+    filename: (req, _file, cb) => {
+      const rawId =
         (req.query.uploadId as string) ||
         (req.headers["x-upload-id"] as string) ||
-        (req.body && req.body.uploadId);
-      let rawIndex =
+        (req.body && req.body.uploadId) ||
+        "upload";
+      const rawIndex =
         (req.query.chunkIndex as string) ||
         (req.headers["x-chunk-index"] as string) ||
-        (req.body && req.body.chunkIndex);
-
-      if (!rawId || rawIndex === undefined || rawIndex === null || rawIndex === "") {
-        const nameParts = (file.originalname || "").match(/^(.*)_part_(\d+)$/);
-        if (nameParts) {
-          if (!rawId) rawId = nameParts[1];
-          if (rawIndex === undefined || rawIndex === null || rawIndex === "") rawIndex = nameParts[2];
-        } else {
-          const chunkMatch = (file.originalname || "").match(/chunk_(\d+)/);
-          if (chunkMatch && (rawIndex === undefined || rawIndex === null || rawIndex === "")) {
-            rawIndex = chunkMatch[1];
-          }
-        }
-      }
-
-      const uploadId = String(rawId || "upload").replace(/[^a-zA-Z0-9_-]/g, "");
-      const chunkIndex = parseInt(String(rawIndex ?? "0"), 10) || 0;
+        (req.body && req.body.chunkIndex) ||
+        "0";
+      const uploadId = String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
+      const chunkIndex = parseInt(String(rawIndex), 10) || 0;
       cb(null, `${uploadId}_part_${chunkIndex}`);
     }
   });
@@ -145,7 +133,7 @@ async function startServer() {
     limits: { fileSize: 25 * 1024 * 1024 } // 25MB max per chunk
   });
 
-  // Dedicated byte-range streaming handler for fast seeking in 2GB+ video files
+  // Dedicated byte-range streaming handler for fast seeking and responsive playback in 2.5GB+ video files
   app.get("/uploads/:filename", (req, res, next) => {
     const filename = path.basename(req.params.filename);
     const filePath = path.join(uploadsDir, filename);
@@ -161,7 +149,7 @@ async function startServer() {
     // Enable cross-origin and streaming headers
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Range, Content-Type");
+    res.header("Access-Control-Allow-Headers", "Range, Content-Type, Accept-Ranges");
     res.header("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
     res.header("Accept-Ranges", "bytes");
 
@@ -171,7 +159,7 @@ async function startServer() {
       ".webm": "video/webm",
       ".ogg": "video/ogg",
       ".mov": "video/quicktime",
-      ".mkv": "video/x-matroska",
+      ".mkv": "video/mp4",
       ".avi": "video/x-msvideo",
       ".jpg": "image/jpeg",
       ".jpeg": "image/jpeg",
@@ -183,18 +171,44 @@ async function startServer() {
     };
     const contentType = mimeTypes[ext] || "application/octet-stream";
 
+    // Handle HEAD request for metadata probing
+    if (req.method === "HEAD") {
+      res.writeHead(200, {
+        "Content-Length": fileSize,
+        "Content-Type": contentType,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=86400"
+      });
+      return res.end();
+    }
+
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
       const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      
+      // For open-ended ranges (e.g. "bytes=0-"), cap chunk size to 8MB so Cloud Run
+      // reverse proxies and mobile browsers never buffer overflow or stall on 2.5GB+ movies!
+      const MAX_RANGE_CHUNK = 8 * 1024 * 1024; // 8MB per range chunk
+      const requestedEnd = parts[1] && parts[1].trim() !== "" ? parseInt(parts[1], 10) : NaN;
+      const end = !isNaN(requestedEnd)
+        ? Math.min(requestedEnd, fileSize - 1)
+        : Math.min(start + MAX_RANGE_CHUNK - 1, fileSize - 1);
 
-      if (isNaN(start) || start >= fileSize || (parts[1] && end >= fileSize) || start > end) {
+      if (isNaN(start) || start >= fileSize || start > end) {
         res.status(416).header("Content-Range", `bytes */${fileSize}`).end();
         return;
       }
 
       const chunkSize = end - start + 1;
       const fileStream = fs.createReadStream(filePath, { start, end });
+
+      // Free file handles and abort stream immediately when scrubbing or navigating
+      req.on("close", () => fileStream.destroy());
+      res.on("close", () => fileStream.destroy());
+      fileStream.on("error", () => {
+        if (!res.headersSent) res.status(500).end();
+      });
+
       res.writeHead(206, {
         "Content-Range": `bytes ${start}-${end}/${fileSize}`,
         "Accept-Ranges": "bytes",
@@ -204,13 +218,40 @@ async function startServer() {
       });
       fileStream.pipe(res);
     } else {
-      res.writeHead(200, {
-        "Content-Length": fileSize,
-        "Content-Type": contentType,
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "public, max-age=86400"
-      });
-      fs.createReadStream(filePath).pipe(res);
+      // If no Range header was provided and file is large (>16MB), serve initial 8MB window
+      // with 206 Partial Content so browser switches to byte-range mode immediately
+      if (fileSize > 16 * 1024 * 1024) {
+        const chunkSize = Math.min(8 * 1024 * 1024, fileSize);
+        const end = chunkSize - 1;
+        const fileStream = fs.createReadStream(filePath, { start: 0, end });
+        req.on("close", () => fileStream.destroy());
+        res.on("close", () => fileStream.destroy());
+        fileStream.on("error", () => {
+          if (!res.headersSent) res.status(500).end();
+        });
+        res.writeHead(206, {
+          "Content-Range": `bytes 0-${end}/${fileSize}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": chunkSize,
+          "Content-Type": contentType,
+          "Cache-Control": "public, max-age=86400"
+        });
+        fileStream.pipe(res);
+      } else {
+        res.writeHead(200, {
+          "Content-Length": fileSize,
+          "Content-Type": contentType,
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "public, max-age=86400"
+        });
+        const fileStream = fs.createReadStream(filePath);
+        req.on("close", () => fileStream.destroy());
+        res.on("close", () => fileStream.destroy());
+        fileStream.on("error", () => {
+          if (!res.headersSent) res.status(500).end();
+        });
+        fileStream.pipe(res);
+      }
     }
   });
 
@@ -403,13 +444,11 @@ async function startServer() {
       io.to(roomId).emit("participants-update", Array.from(room.participants.values()));
 
       // System chat message
-      const now = Date.now();
       const joinMsg = {
         id: Math.random().toString(36).substring(2, 9),
         sender: "System",
         text: `${name || "A user"} joined the lounge.`,
-        timestamp: now,
-        time: new Date(now).toISOString(),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         avatarColor: "#9ca3af"
       };
       room.messages.push(joinMsg);
@@ -825,37 +864,17 @@ async function startServer() {
     socket.on("chat-message", ({ roomId, message }) => {
       const room = rooms.get(roomId);
       if (room) {
-        const now = Date.now();
-        const timestamp = typeof message?.timestamp === 'number' ? message.timestamp : now;
         const fullMsg = {
           id: Math.random().toString(36).substring(2, 9),
           ...message,
-          timestamp,
-          time: new Date(timestamp).toISOString()
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         if (!room.messages) room.messages = [];
         room.messages.push(fullMsg);
         if (room.messages.length > 500) room.messages.shift(); // Retain up to 500 messages per room
         saveRoomsDb();
-        // Also clear typing indicator for this sender upon message sent
-        socket.to(roomId).emit("user-typing", {
-          socketId: socket.id,
-          userName: message.sender || "Someone",
-          isTyping: false
-        });
         io.to(roomId).emit("chat-message", fullMsg);
       }
-    });
-
-    // Real-time typing indicator
-    socket.on("typing", ({ roomId, isTyping, userName }: { roomId: string; isTyping: boolean; userName?: string }) => {
-      const room = rooms.get(roomId);
-      const senderName = userName || (room?.participants?.get(socket.id)?.name) || "Someone";
-      socket.to(roomId).emit("user-typing", {
-        socketId: socket.id,
-        userName: senderName,
-        isTyping: !!isTyping
-      });
     });
 
     // Mic status toggle
@@ -888,19 +907,12 @@ async function startServer() {
           room.participants.delete(socket.id);
 
           // Broadcast updated participant list (do NOT delete room or messages - keep all data stored)
-          socket.to(roomId).emit("user-typing", {
-            socketId: socket.id,
-            userName: participant.name,
-            isTyping: false
-          });
           io.to(roomId).emit("participants-update", Array.from(room.participants.values()));
-          const now = Date.now();
           const leaveMsg = {
             id: Math.random().toString(36).substring(2, 9),
             sender: "System",
             text: `${participant.name} left the lounge.`,
-            timestamp: now,
-            time: new Date(now).toISOString(),
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             avatarColor: "#9ca3af"
           };
           room.messages.push(leaveMsg);
@@ -911,8 +923,8 @@ async function startServer() {
     });
   });
 
-  // API health check & stored rooms info (supports /healthz and /api/health for Cloud Run probes)
-  app.get(["/healthz", "/api/health"], (req, res) => {
+  // API health check & stored rooms info
+  app.get("/api/health", (req, res) => {
     res.json({ status: "ok", activeRooms: rooms.size });
   });
 
@@ -1033,7 +1045,7 @@ async function startServer() {
 
   // Media upload endpoint (movies, audio, photos) with robust error trapping
   app.post("/api/upload", (req, res) => {
-    upload.single("file")(req as any, res as any, (err: any) => {
+    upload.single("file")(req, res, (err) => {
       if (err) {
         console.error("[Upload] Multer error during upload:", err);
         if (err instanceof multer.MulterError) {
@@ -1069,10 +1081,36 @@ async function startServer() {
     });
   });
 
+  // Endpoint to check if a chunk is already saved on server (resumable / idempotent verification)
+  app.get("/api/upload/chunk-status", (req, res) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    const rawId = (req.query.uploadId as string) || "";
+    const uploadId = rawId.replace(/[^a-zA-Z0-9_-]/g, "");
+    const chunkIndex = parseInt((req.query.chunkIndex as string) || "-1", 10);
+    const expectedSize = parseInt((req.query.expectedSize as string) || "0", 10);
+
+    if (!uploadId || chunkIndex < 0) {
+      return res.status(400).json({ error: "Invalid uploadId or chunkIndex" });
+    }
+
+    const partPath = path.join(chunksDir, `${uploadId}_part_${chunkIndex}`);
+    if (fs.existsSync(partPath)) {
+      const size = fs.statSync(partPath).size;
+      if (expectedSize > 0 && Math.abs(size - expectedSize) > 0) {
+        // Size mismatch
+        return res.json({ exists: false, size });
+      }
+      return res.json({ exists: true, size });
+    }
+
+    return res.json({ exists: false });
+  });
+
   // Chunked upload endpoint to handle arbitrarily large files (350MB - 4GB)
   // bypassing reverse proxy / Cloud Run 32MB payload limits completely!
   app.post("/api/upload/chunk", (req, res) => {
-    uploadChunk.single("chunk")(req as any, res as any, async (err: any) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    uploadChunk.single("chunk")(req, res, async (err) => {
       if (err) {
         console.error("[Chunk Upload] Multer error:", err);
         return res.status(400).json({ error: `Chunk upload failed: ${err.message}` });
@@ -1101,21 +1139,14 @@ async function startServer() {
 
       const fileName =
         (req.query.fileName as string) ||
-        (req.headers["x-file-name"] as string) ||
         (req.body && req.body.fileName) ||
         "video.mp4";
 
       const fileSize =
-        parseInt(
-          (req.query.fileSize as string) ||
-          (req.headers["x-file-size"] as string) ||
-          (req.body && req.body.fileSize),
-          10
-        ) || 0;
+        parseInt((req.query.fileSize as string) || (req.body && req.body.fileSize), 10) || 0;
 
       const fileType =
         (req.query.fileType as string) ||
-        (req.headers["x-file-type"] as string) ||
         (req.body && req.body.fileType) ||
         "";
 
@@ -1125,11 +1156,18 @@ async function startServer() {
 
       // If this is the final chunk, assemble the parts
       if (chunkIndex === totalChunks - 1) {
-        // Verify all parts exist from 0 to totalChunks - 1
+        // Verify all parts exist from 0 to totalChunks - 1 (with brief retry for disk flush)
         for (let i = 0; i < totalChunks; i++) {
           const partPath = path.join(chunksDir, `${uploadId}_part_${i}`);
-          if (!fs.existsSync(partPath)) {
-            console.error(`[Chunk Upload] Missing chunk file: ${partPath}`);
+          let exists = fs.existsSync(partPath);
+          if (!exists) {
+            for (let retry = 0; retry < 5 && !exists; retry++) {
+              await new Promise((r) => setTimeout(r, 100));
+              exists = fs.existsSync(partPath);
+            }
+          }
+          if (!exists) {
+            console.error(`[Chunk Upload] Missing part ${i} for upload ${uploadId} in ${chunksDir}`);
             return res.status(400).json({
               error: `Missing part ${i} of ${totalChunks}. Please resume or retry.`
             });
@@ -1142,13 +1180,93 @@ async function startServer() {
         const finalFilePath = path.join(uploadsDir, finalFilename);
 
         try {
-          fs.writeFileSync(finalFilePath, Buffer.alloc(0));
+          if (fs.existsSync(finalFilePath)) {
+            fs.unlinkSync(finalFilePath);
+          }
 
+          // Merge each part into final file using stream pipeline to avoid event-loop blocking
+          const writeStream = fs.createWriteStream(finalFilePath);
           for (let i = 0; i < totalChunks; i++) {
             const partPath = path.join(chunksDir, `${uploadId}_part_${i}`);
-            const data = fs.readFileSync(partPath);
-            fs.appendFileSync(finalFilePath, data);
-            try { fs.unlinkSync(partPath); } catch (_) {}
+            await new Promise<void>((resolve, reject) => {
+              const readStream = fs.createReadStream(partPath);
+              readStream.on("error", reject);
+              readStream.pipe(writeStream, { end: false });
+              readStream.on("end", () => {
+                try { fs.unlinkSync(partPath); } catch (_) {}
+                resolve();
+              });
+            });
+          }
+          await new Promise<void>((resolve, reject) => {
+            writeStream.on("finish", () => resolve());
+            writeStream.on("error", reject);
+            writeStream.end();
+          });
+
+          let finalServedFilename = finalFilename;
+          const lowerExt = path.extname(finalFilename).toLowerCase();
+
+          // Optimization for 2.5GB+ video playback:
+          // 1. If MKV, remux to MP4 so standard browser <video> tags can decode it
+          // 2. If MP4, apply +faststart to move moov atom to beginning of file for instant playback
+          if (lowerExt === ".mkv") {
+            const mp4Filename = finalFilename.replace(/\.mkv$/i, ".mp4");
+            const mp4Path = path.join(uploadsDir, mp4Filename);
+            try {
+              console.log(`[Chunk Upload] Auto-remuxing MKV to faststart MP4 for ${finalFilename}...`);
+              await new Promise<void>((resolve) => {
+                const ffmpeg = spawn("ffmpeg", [
+                  "-y",
+                  "-i", finalFilePath,
+                  "-c:v", "copy",
+                  "-c:a", "aac",
+                  "-movflags", "+faststart",
+                  mp4Path
+                ]);
+                ffmpeg.on("close", (code) => {
+                  if (code === 0 && fs.existsSync(mp4Path) && fs.statSync(mp4Path).size > 0) {
+                    try { fs.unlinkSync(finalFilePath); } catch (_) {}
+                    finalServedFilename = mp4Filename;
+                    console.log(`[Chunk Upload] Successfully remuxed MKV to MP4: ${mp4Filename}`);
+                  }
+                  resolve();
+                });
+                ffmpeg.on("error", () => resolve());
+              });
+            } catch (remuxErr) {
+              console.warn("[Chunk Upload] Remux skipped:", remuxErr);
+            }
+          } else if (lowerExt === ".mp4" || lowerExt === ".mov") {
+            const fastFilename = `fast_${finalFilename}`;
+            const fastPath = path.join(uploadsDir, fastFilename);
+            try {
+              console.log(`[Chunk Upload] Applying +faststart to ${finalFilename}...`);
+              await new Promise<void>((resolve) => {
+                const ffmpeg = spawn("ffmpeg", [
+                  "-y",
+                  "-i", finalFilePath,
+                  "-c", "copy",
+                  "-movflags", "+faststart",
+                  fastPath
+                ]);
+                ffmpeg.on("close", (code) => {
+                  if (code === 0 && fs.existsSync(fastPath) && fs.statSync(fastPath).size > 0) {
+                    try {
+                      fs.unlinkSync(finalFilePath);
+                      fs.renameSync(fastPath, finalFilePath);
+                      console.log(`[Chunk Upload] Applied +faststart to ${finalFilename}`);
+                    } catch (_) {}
+                  } else {
+                    try { if (fs.existsSync(fastPath)) fs.unlinkSync(fastPath); } catch (_) {}
+                  }
+                  resolve();
+                });
+                ffmpeg.on("error", () => resolve());
+              });
+            } catch (fastErr) {
+              console.warn("[Chunk Upload] Faststart skipped:", fastErr);
+            }
           }
 
           let mediaType: "video" | "audio" | "image" = "video";
@@ -1158,13 +1276,14 @@ async function startServer() {
             mediaType = "audio";
           }
 
-          const assembledSize = fs.statSync(finalFilePath).size;
-          console.log(`[Chunk Upload] Assembled file: ${finalFilename} (${totalChunks} chunks, size: ${assembledSize})`);
+          const currentFinalPath = path.join(uploadsDir, finalServedFilename);
+          const assembledSize = fs.existsSync(currentFinalPath) ? fs.statSync(currentFinalPath).size : 0;
+          console.log(`[Chunk Upload] Successfully assembled file: ${finalServedFilename} (${totalChunks} chunks, size: ${assembledSize})`);
 
           return res.json({
-            url: `/uploads/${finalFilename}`,
+            url: `/uploads/${finalServedFilename}`,
             mediaType,
-            mediaTitle: fileName,
+            mediaTitle: fileName.replace(/\.mkv$/i, ".mp4"),
             size: assembledSize
           });
         } catch (mergeErr: any) {
@@ -1180,6 +1299,55 @@ async function startServer() {
         totalChunks
       });
     });
+  });
+
+  // Optimize uploaded media file on-demand for web browser playback (+faststart, AAC audio)
+  app.post("/api/media/optimize", express.json(), async (req, res) => {
+    try {
+      const mediaUrl = req.body?.url || "";
+      if (!mediaUrl.startsWith("/uploads/")) {
+        return res.status(400).json({ error: "Invalid media URL" });
+      }
+      const rawName = path.basename(mediaUrl);
+      const inputPath = path.join(uploadsDir, rawName);
+      if (!fs.existsSync(inputPath)) {
+        return res.status(404).json({ error: "Media file not found on server" });
+      }
+
+      const outName = rawName.replace(/\.[^/.]+$/, "") + "_web.mp4";
+      const outputPath = path.join(uploadsDir, outName);
+
+      console.log(`[Media Optimize] Optimizing ${rawName} -> ${outName}...`);
+
+      await new Promise<void>((resolve, reject) => {
+        const ffmpeg = spawn("ffmpeg", [
+          "-y",
+          "-i", inputPath,
+          "-c:v", "copy",
+          "-c:a", "aac",
+          "-movflags", "+faststart",
+          outputPath
+        ]);
+        ffmpeg.on("close", (code) => {
+          if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+            resolve();
+          } else {
+            reject(new Error(`ffmpeg exited with code ${code}`));
+          }
+        });
+        ffmpeg.on("error", reject);
+      });
+
+      const newSize = fs.statSync(outputPath).size;
+      return res.json({
+        success: true,
+        optimizedUrl: `/uploads/${outName}`,
+        size: newSize
+      });
+    } catch (err: any) {
+      console.error("[Media Optimize] Error:", err);
+      return res.status(500).json({ error: err.message || "Failed to optimize media file" });
+    }
   });
 
   // Abort chunked upload and clean up temporary parts
@@ -1213,26 +1381,17 @@ async function startServer() {
     } catch (_) {}
   }, 30 * 60 * 1000);
 
-  // Production static file serving vs Development Vite middleware
-  const distPath = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))
-    ? path.join(process.cwd(), 'dist')
-    : (typeof __dirname !== 'undefined' && fs.existsSync(path.join(__dirname, 'index.html')))
-      ? __dirname
-      : path.join(process.cwd(), 'dist');
-
+  // Vite middleware for development or static serving for production
+  const distPath = path.join(process.cwd(), 'dist');
   const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
-  const isProduction = process.env.NODE_ENV === "production" || (hasDist && process.env.NODE_ENV !== "development");
 
-  if (!isProduction) {
-    // Dynamically load Vite only in development mode
-    const { createServer: createViteServer } = await import("vite");
+  if (process.env.NODE_ENV !== "production" || !hasDist) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    // Production mode: serve pre-built static assets from dist
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -1244,13 +1403,6 @@ async function startServer() {
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
   server.requestTimeout = 1800000;
-
-  // Handle graceful shutdown in Cloud Run container lifecycle
-  process.on('SIGTERM', () => {
-    server.close(() => {
-      process.exit(0);
-    });
-  });
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`SyncSpace server running on http://0.0.0.0:${PORT}`);
