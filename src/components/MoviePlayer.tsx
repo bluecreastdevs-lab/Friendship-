@@ -688,15 +688,29 @@ export default function MoviePlayer({
                 reject(new Error('Upload cancelled'));
               };
 
-              xhr.open('POST', '/api/upload/chunk', true);
+              const queryParams = new URLSearchParams({
+                uploadId,
+                chunkIndex: String(chunkIndex),
+                totalChunks: String(totalChunks),
+                fileName: file.name,
+                fileSize: String(file.size),
+                fileType: file.type || ''
+              });
+
+              xhr.open('POST', `/api/upload/chunk?${queryParams.toString()}`, true);
+              xhr.setRequestHeader('X-Upload-Id', uploadId);
+              xhr.setRequestHeader('X-Chunk-Index', String(chunkIndex));
+              xhr.setRequestHeader('X-Total-Chunks', String(totalChunks));
+
               const formData = new FormData();
-              formData.append('chunk', chunkBlob, `chunk_${chunkIndex}`);
+              // Append text metadata fields FIRST before the binary chunk
               formData.append('uploadId', uploadId);
               formData.append('chunkIndex', String(chunkIndex));
               formData.append('totalChunks', String(totalChunks));
               formData.append('fileName', file.name);
               formData.append('fileSize', String(file.size));
               formData.append('fileType', file.type);
+              formData.append('chunk', chunkBlob, `${uploadId}_part_${chunkIndex}`);
               xhr.send(formData);
             });
 

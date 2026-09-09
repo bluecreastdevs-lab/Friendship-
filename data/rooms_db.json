@@ -1,0 +1,86 @@
+{
+  "lounge-101": {
+    "movieState": {
+      "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      "mediaType": "video",
+      "isPlaying": false,
+      "currentTime": 0,
+      "serverTimestamp": 1788962813356,
+      "mediaTitle": "Big Buck Bunny (Animated Movie)",
+      "uploadedBy": "System",
+      "playlist": []
+    },
+    "imageState": {
+      "activeImageUrl": "/uploads/1788962849048-4711364-31c4ef641612efb366ea62eefed353f0.jpg",
+      "activeImageTitle": "31c4ef641612efb366ea62eefed353f0.jpg",
+      "uploadedBy": "gopi",
+      "imageZoom": 1,
+      "gallery": [
+        {
+          "id": "img-1788962849104",
+          "url": "/uploads/1788962849048-4711364-31c4ef641612efb366ea62eefed353f0.jpg",
+          "title": "31c4ef641612efb366ea62eefed353f0.jpg",
+          "uploadedBy": "gopi",
+          "thumbnail": "/uploads/1788962849048-4711364-31c4ef641612efb366ea62eefed353f0.jpg",
+          "timestamp": 1788962849140
+        }
+      ],
+      "serverTimestamp": 1788962849140
+    },
+    "roomState": {
+      "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      "mediaType": "video",
+      "isPlaying": false,
+      "currentTime": 0,
+      "serverTimestamp": 1788962813356,
+      "mediaTitle": "Big Buck Bunny (Animated Movie)",
+      "uploadedBy": "System",
+      "playlist": []
+    },
+    "mediaState": {
+      "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      "mediaType": "video",
+      "isPlaying": false,
+      "currentTime": 0,
+      "serverTimestamp": 1788962813356,
+      "mediaTitle": "Big Buck Bunny (Animated Movie)",
+      "uploadedBy": "System",
+      "playlist": [],
+      "lastUpdated": 1788962813356
+    },
+    "messages": [
+      {
+        "id": "dnb1o1c",
+        "sender": "System",
+        "text": "gopi joined the lounge.",
+        "time": "02:01 PM",
+        "avatarColor": "#9ca3af",
+        "timestamp": 1788964073479.8994
+      },
+      {
+        "id": "5btt8h4",
+        "sender": "System",
+        "text": "gopi left the lounge.",
+        "time": "02:04 PM",
+        "avatarColor": "#9ca3af",
+        "timestamp": 1788964073479.8994
+      },
+      {
+        "id": "p0kfkrb",
+        "sender": "System",
+        "text": "gopi joined the lounge.",
+        "time": "02:04 PM",
+        "avatarColor": "#9ca3af",
+        "timestamp": 1788964073479.8994
+      },
+      {
+        "id": "vptqv26",
+        "sender": "System",
+        "text": "gopi joined the lounge.",
+        "time": "02:09 PM",
+        "avatarColor": "#9ca3af",
+        "timestamp": 1788964073479.8994
+      }
+    ]
+  }
+}

@@ -42,9 +42,23 @@ async function startServer() {
       try {
         const raw = fs.readFileSync(DB_FILE, "utf-8");
         const parsed = JSON.parse(raw);
+        const fileMtime = fs.statSync(DB_FILE).mtimeMs;
         for (const [roomId, roomData] of Object.entries(parsed as Record<string, any>)) {
+          const messages = Array.isArray(roomData.messages) ? roomData.messages.map((m: any) => {
+            if (typeof m.timestamp === "number" && !isNaN(m.timestamp)) {
+              return m;
+            }
+            const parsedTime = Date.parse(m.time);
+            const ts = !isNaN(parsedTime) ? parsedTime : fileMtime;
+            return {
+              ...m,
+              timestamp: ts
+            };
+          }) : [];
+
           map.set(roomId, {
             ...roomData,
+            messages,
             participants: new Map() // Ephemeral connected sockets
           });
         }
@@ -98,19 +112,31 @@ async function startServer() {
 
   const chunkStorage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, chunksDir),
-    filename: (req, _file, cb) => {
-      const rawId =
+    filename: (req, file, cb) => {
+      let rawId =
         (req.query.uploadId as string) ||
         (req.headers["x-upload-id"] as string) ||
-        (req.body && req.body.uploadId) ||
-        "upload";
-      const rawIndex =
+        (req.body && req.body.uploadId);
+      let rawIndex =
         (req.query.chunkIndex as string) ||
         (req.headers["x-chunk-index"] as string) ||
-        (req.body && req.body.chunkIndex) ||
-        "0";
-      const uploadId = String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
-      const chunkIndex = parseInt(String(rawIndex), 10) || 0;
+        (req.body && req.body.chunkIndex);
+
+      if (!rawId || rawIndex === undefined || rawIndex === null || rawIndex === "") {
+        const nameParts = (file.originalname || "").match(/^(.*)_part_(\d+)$/);
+        if (nameParts) {
+          if (!rawId) rawId = nameParts[1];
+          if (rawIndex === undefined || rawIndex === null || rawIndex === "") rawIndex = nameParts[2];
+        } else {
+          const chunkMatch = (file.originalname || "").match(/chunk_(\d+)/);
+          if (chunkMatch && (rawIndex === undefined || rawIndex === null || rawIndex === "")) {
+            rawIndex = chunkMatch[1];
+          }
+        }
+      }
+
+      const uploadId = String(rawId || "upload").replace(/[^a-zA-Z0-9_-]/g, "");
+      const chunkIndex = parseInt(String(rawIndex ?? "0"), 10) || 0;
       cb(null, `${uploadId}_part_${chunkIndex}`);
     }
   });
@@ -378,11 +404,13 @@ async function startServer() {
       io.to(roomId).emit("participants-update", Array.from(room.participants.values()));
 
       // System chat message
+      const now = Date.now();
       const joinMsg = {
         id: Math.random().toString(36).substring(2, 9),
         sender: "System",
         text: `${name || "A user"} joined the lounge.`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: now,
+        time: new Date(now).toISOString(),
         avatarColor: "#9ca3af"
       };
       room.messages.push(joinMsg);
@@ -798,17 +826,37 @@ async function startServer() {
     socket.on("chat-message", ({ roomId, message }) => {
       const room = rooms.get(roomId);
       if (room) {
+        const now = Date.now();
+        const timestamp = typeof message?.timestamp === 'number' ? message.timestamp : now;
         const fullMsg = {
           id: Math.random().toString(36).substring(2, 9),
           ...message,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          timestamp,
+          time: new Date(timestamp).toISOString()
         };
         if (!room.messages) room.messages = [];
         room.messages.push(fullMsg);
         if (room.messages.length > 500) room.messages.shift(); // Retain up to 500 messages per room
         saveRoomsDb();
+        // Also clear typing indicator for this sender upon message sent
+        socket.to(roomId).emit("user-typing", {
+          socketId: socket.id,
+          userName: message.sender || "Someone",
+          isTyping: false
+        });
         io.to(roomId).emit("chat-message", fullMsg);
       }
+    });
+
+    // Real-time typing indicator
+    socket.on("typing", ({ roomId, isTyping, userName }: { roomId: string; isTyping: boolean; userName?: string }) => {
+      const room = rooms.get(roomId);
+      const senderName = userName || (room?.participants?.get(socket.id)?.name) || "Someone";
+      socket.to(roomId).emit("user-typing", {
+        socketId: socket.id,
+        userName: senderName,
+        isTyping: !!isTyping
+      });
     });
 
     // Mic status toggle
@@ -841,12 +889,19 @@ async function startServer() {
           room.participants.delete(socket.id);
 
           // Broadcast updated participant list (do NOT delete room or messages - keep all data stored)
+          socket.to(roomId).emit("user-typing", {
+            socketId: socket.id,
+            userName: participant.name,
+            isTyping: false
+          });
           io.to(roomId).emit("participants-update", Array.from(room.participants.values()));
+          const now = Date.now();
           const leaveMsg = {
             id: Math.random().toString(36).substring(2, 9),
             sender: "System",
             text: `${participant.name} left the lounge.`,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            timestamp: now,
+            time: new Date(now).toISOString(),
             avatarColor: "#9ca3af"
           };
           room.messages.push(leaveMsg);
@@ -979,7 +1034,7 @@ async function startServer() {
 
   // Media upload endpoint (movies, audio, photos) with robust error trapping
   app.post("/api/upload", (req, res) => {
-    upload.single("file")(req, res, (err) => {
+    upload.single("file")(req as any, res as any, (err: any) => {
       if (err) {
         console.error("[Upload] Multer error during upload:", err);
         if (err instanceof multer.MulterError) {
@@ -1018,18 +1073,52 @@ async function startServer() {
   // Chunked upload endpoint to handle arbitrarily large files (350MB - 4GB)
   // bypassing reverse proxy / Cloud Run 32MB payload limits completely!
   app.post("/api/upload/chunk", (req, res) => {
-    uploadChunk.single("chunk")(req, res, async (err) => {
+    uploadChunk.single("chunk")(req as any, res as any, async (err: any) => {
       if (err) {
         console.error("[Chunk Upload] Multer error:", err);
         return res.status(400).json({ error: `Chunk upload failed: ${err.message}` });
       }
 
-      const uploadId = (req.body.uploadId || "").replace(/[^a-zA-Z0-9_-]/g, "");
-      const chunkIndex = parseInt(req.body.chunkIndex, 10);
-      const totalChunks = parseInt(req.body.totalChunks, 10);
-      const fileName = req.body.fileName || "video.mp4";
-      const fileSize = parseInt(req.body.fileSize, 10) || 0;
-      const fileType = req.body.fileType || "";
+      const uploadId = (
+        (req.query.uploadId as string) ||
+        (req.headers["x-upload-id"] as string) ||
+        (req.body && req.body.uploadId) ||
+        ""
+      ).replace(/[^a-zA-Z0-9_-]/g, "");
+
+      const chunkIndex = parseInt(
+        (req.query.chunkIndex as string) ||
+        (req.headers["x-chunk-index"] as string) ||
+        (req.body && req.body.chunkIndex),
+        10
+      );
+
+      const totalChunks = parseInt(
+        (req.query.totalChunks as string) ||
+        (req.headers["x-total-chunks"] as string) ||
+        (req.body && req.body.totalChunks),
+        10
+      );
+
+      const fileName =
+        (req.query.fileName as string) ||
+        (req.headers["x-file-name"] as string) ||
+        (req.body && req.body.fileName) ||
+        "video.mp4";
+
+      const fileSize =
+        parseInt(
+          (req.query.fileSize as string) ||
+          (req.headers["x-file-size"] as string) ||
+          (req.body && req.body.fileSize),
+          10
+        ) || 0;
+
+      const fileType =
+        (req.query.fileType as string) ||
+        (req.headers["x-file-type"] as string) ||
+        (req.body && req.body.fileType) ||
+        "";
 
       if (!uploadId || isNaN(chunkIndex) || isNaN(totalChunks)) {
         return res.status(400).json({ error: "Missing chunk metadata (uploadId, chunkIndex, totalChunks)" });
@@ -1041,6 +1130,7 @@ async function startServer() {
         for (let i = 0; i < totalChunks; i++) {
           const partPath = path.join(chunksDir, `${uploadId}_part_${i}`);
           if (!fs.existsSync(partPath)) {
+            console.error(`[Chunk Upload] Missing chunk file: ${partPath}`);
             return res.status(400).json({
               error: `Missing part ${i} of ${totalChunks}. Please resume or retry.`
             });
@@ -1053,16 +1143,14 @@ async function startServer() {
         const finalFilePath = path.join(uploadsDir, finalFilename);
 
         try {
-          const writeStream = fs.createWriteStream(finalFilePath);
+          fs.writeFileSync(finalFilePath, Buffer.alloc(0));
 
           for (let i = 0; i < totalChunks; i++) {
             const partPath = path.join(chunksDir, `${uploadId}_part_${i}`);
             const data = fs.readFileSync(partPath);
-            writeStream.write(data);
+            fs.appendFileSync(finalFilePath, data);
             try { fs.unlinkSync(partPath); } catch (_) {}
           }
-
-          writeStream.end();
 
           let mediaType: "video" | "audio" | "image" = "video";
           if (fileType.startsWith("image/")) {
@@ -1071,13 +1159,14 @@ async function startServer() {
             mediaType = "audio";
           }
 
-          console.log(`[Chunk Upload] Assembled file: ${finalFilename} (${totalChunks} chunks, size: ${fileSize || fs.statSync(finalFilePath).size})`);
+          const assembledSize = fs.statSync(finalFilePath).size;
+          console.log(`[Chunk Upload] Assembled file: ${finalFilename} (${totalChunks} chunks, size: ${assembledSize})`);
 
           return res.json({
             url: `/uploads/${finalFilename}`,
             mediaType,
             mediaTitle: fileName,
-            size: fileSize || fs.statSync(finalFilePath).size
+            size: assembledSize
           });
         } catch (mergeErr: any) {
           console.error("[Chunk Upload] Error merging chunks:", mergeErr);

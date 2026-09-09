@@ -208,7 +208,8 @@ export default function App() {
       message: {
         sender: userName,
         text,
-        avatarColor
+        avatarColor,
+        timestamp: Date.now()
       }
     });
   };
@@ -458,6 +459,7 @@ export default function App() {
                 onSendMessage={handleSendMessage}
                 currentUser={userName}
                 roomId={roomId}
+                socket={socket}
               />
             </div>
           </div>

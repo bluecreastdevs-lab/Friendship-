@@ -11,6 +11,14 @@ export interface Message {
   text: string;
   time: string;
   avatarColor: string;
+  timestamp?: number;
+}
+
+export interface TypingPayload {
+  roomId: string;
+  userName: string;
+  isTyping: boolean;
+  socketId?: string;
 }
 
 export interface MediaState {
