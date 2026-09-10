@@ -612,6 +612,25 @@ export default function MoviePlayer({
     }
   };
 
+  // Switch to compatible sample video
+  const handleSwitchToSample = () => {
+    setVideoError(null);
+    const sampleUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
+    const sampleTitle = 'Big Buck Bunny (Animated Classic)';
+    onMovieStateChange({
+      mediaUrl: sampleUrl,
+      mediaTitle: sampleTitle,
+      currentTime: 0,
+      isPlaying: true
+    });
+    broadcastMovieAction('change_movie', {
+      mediaUrl: sampleUrl,
+      mediaTitle: sampleTitle,
+      currentTime: 0,
+      isPlaying: true
+    });
+  };
+
   // Resync action
   const handleResync = () => {
     setIsResyncing(true);
@@ -1174,6 +1193,14 @@ export default function MoviePlayer({
               </div>
 
               <div className="flex flex-col gap-2 pt-1">
+                <button
+                  onClick={handleSwitchToSample}
+                  className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2"
+                >
+                  <Film className="w-4 h-4" />
+                  <span>Switch to Compatible Sample Movie</span>
+                </button>
+
                 {movieState.mediaUrl?.startsWith('/uploads/') && (
                   <button
                     onClick={handleOptimizeVideo}
