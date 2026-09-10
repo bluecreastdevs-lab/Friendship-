@@ -27,9 +27,11 @@ export default function App() {
   // Tab state: 'movie' vs 'image'
   const [mediaTab, setMediaTab] = useState<'movie' | 'image'>('movie');
 
-  // Socket
+  // Socket & Connection status with Exponential Backoff
   const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'disconnected'>('connected');
+  const [reconnectAttemptCount, setReconnectAttemptCount] = useState(0);
 
   // Participants & Messages
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -110,16 +112,55 @@ export default function App() {
     } catch (_) {}
   }, []);
 
-  // Connect to room
+  // Connect to room with robust exponential backoff reconnection strategy
   const connectToRoom = (targetRoomId: string, name: string, color: string) => {
-    const newSocket = io();
+    const newSocket = io({
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 30000,
+      randomizationFactor: 0.5,
+      timeout: 20000
+    });
     socketRef.current = newSocket;
     setSocket(newSocket);
 
-    newSocket.emit('join-room', {
+    const joinData = {
       roomId: targetRoomId.trim(),
       name: name.trim(),
       avatarColor: color
+    };
+
+    newSocket.on('connect', () => {
+      setConnectionStatus('connected');
+      setReconnectAttemptCount(0);
+      newSocket.emit('join-room', joinData);
+      newSocket.emit('request-sync', { roomId: targetRoomId.trim() });
+    });
+
+    newSocket.on('disconnect', (reason) => {
+      setConnectionStatus('disconnected');
+      console.warn('Socket disconnected:', reason);
+    });
+
+    newSocket.on('reconnect_attempt', (attempt) => {
+      setConnectionStatus('reconnecting');
+      setReconnectAttemptCount(attempt);
+      const backoffDelay = Math.min(30000, 1000 * Math.pow(1.5, attempt - 1));
+      console.log(`Socket reconnect attempt #${attempt}. Backoff delay: ~${Math.round(backoffDelay)}ms`);
+    });
+
+    newSocket.on('reconnect', (attempt) => {
+      setConnectionStatus('connected');
+      setReconnectAttemptCount(0);
+      console.log(`Socket successfully reconnected after ${attempt} attempts. Re-syncing room state.`);
+      newSocket.emit('join-room', joinData);
+      newSocket.emit('request-sync', { roomId: targetRoomId.trim() });
+    });
+
+    newSocket.on('reconnect_failed', () => {
+      setConnectionStatus('disconnected');
+      console.error('Socket reconnection failed permanently after max attempts.');
     });
 
     // Authoritative room-state synchronization
@@ -375,6 +416,12 @@ export default function App() {
 
         {/* Center Room Indicator & Share Button */}
         <div className="flex items-center space-x-1.5 shrink-0">
+          {connectionStatus !== 'connected' && (
+            <div className="hidden lg:flex items-center space-x-1 px-2 py-1 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[10px] text-amber-300 font-medium animate-pulse" title={`Reconnecting... Attempt #${reconnectAttemptCount}`}>
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+              <span>Reconnecting (#{reconnectAttemptCount})</span>
+            </div>
+          )}
           <button
             onClick={handleCopyRoom}
             className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-3 py-1 sm:py-1.5 bg-slate-800/90 hover:bg-slate-700/90 rounded-xl border border-slate-700 text-xs text-slate-200 transition-colors shadow-sm"
