@@ -703,6 +703,7 @@ export default function MoviePlayer({
     };
 
     let finalData: any = null;
+    let useObjectUrlFallback = false;
 
     try {
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -714,6 +715,11 @@ export default function MoviePlayer({
         const start = chunkIndex * CHUNK_SIZE;
         const end = Math.min(file.size, start + CHUNK_SIZE);
         const chunkBlob = file.slice(start, end);
+
+        // If fallback mode active, skip server chunks and use object URL
+        if (useObjectUrlFallback) {
+          break;
+        }
 
         // Upload single chunk with retry up to 5 times
         let attempt = 0;
@@ -738,11 +744,9 @@ export default function MoviePlayer({
             setUploadProgressMsg(
               `Reconnecting: Part ${chunkIndex + 1}/${totalChunks} (attempt ${attempt}/5)...`
             );
-            // Progressive exponential backoff
             const delay = Math.min(1000 * Math.pow(1.5, attempt - 1), 5000);
             await new Promise((r) => setTimeout(r, delay));
 
-            // Check again if server received it despite network drop
             const recheck = await checkChunkOnServer(uploadId, chunkIndex, chunkBlob.size);
             if (recheck) {
               chunkSuccess = true;
@@ -754,7 +758,6 @@ export default function MoviePlayer({
             finalData = await new Promise<any>((resolve, reject) => {
               const xhr = new XMLHttpRequest();
               xhrRef.current = xhr;
-              // Allow extra time for final chunk assembly and faststart optimization of 2.5GB movies
               xhr.timeout = isLastChunk ? 180000 : 90000;
 
               xhr.upload.onprogress = (event) => {
@@ -790,6 +793,9 @@ export default function MoviePlayer({
                   } else {
                     resolve({ success: true });
                   }
+                } else if (xhr.status === 404 && chunkIndex === 0) {
+                  // Static hosting / Netlify detected (no backend API) -> trigger client object URL fallback
+                  resolve({ fallback: true });
                 } else {
                   let errMsg = `Server error (${xhr.status})`;
                   if (isJson) {
@@ -811,7 +817,11 @@ export default function MoviePlayer({
 
               xhr.onerror = () => {
                 xhrRef.current = null;
-                reject(new Error(`Network glitch on part ${chunkIndex + 1}/${totalChunks}`));
+                if (chunkIndex === 0) {
+                  resolve({ fallback: true });
+                } else {
+                  reject(new Error(`Network glitch on part ${chunkIndex + 1}/${totalChunks}`));
+                }
               };
 
               xhr.ontimeout = () => {
@@ -845,6 +855,12 @@ export default function MoviePlayer({
               xhr.send(formData);
             });
 
+            if (finalData && finalData.fallback) {
+              useObjectUrlFallback = true;
+              chunkSuccess = true;
+              break;
+            }
+
             chunkSuccess = true;
           } catch (err: any) {
             lastErr = err;
@@ -854,6 +870,10 @@ export default function MoviePlayer({
           }
         }
 
+        if (useObjectUrlFallback) {
+          break;
+        }
+
         if (!chunkSuccess) {
           throw lastErr || new Error(`Failed to upload part ${chunkIndex + 1}/${totalChunks}`);
         }
@@ -861,8 +881,14 @@ export default function MoviePlayer({
 
       if (abortUploadRef.current) return;
 
-      if (!finalData || !finalData.url) {
-        throw new Error('Upload completed, but server did not return the video URL.');
+      let videoUrl = '';
+      if (useObjectUrlFallback) {
+        videoUrl = URL.createObjectURL(file);
+      } else {
+        if (!finalData || !finalData.url) {
+          throw new Error('Upload completed, but server did not return the video URL.');
+        }
+        videoUrl = finalData.url;
       }
 
       setUploadPercent(100);
@@ -870,17 +896,17 @@ export default function MoviePlayer({
 
       const newVideoItem: VideoItem = {
         id: `vid-${Date.now()}`,
-        url: finalData.url,
+        url: videoUrl,
         title: file.name,
         uploadedBy: currentUser,
         timestamp: Date.now()
       };
       const currentPl = movieState.playlist || [];
-      const updatedPlaylist = [newVideoItem, ...currentPl.filter((v) => v.url !== finalData.url)];
+      const updatedPlaylist = [newVideoItem, ...currentPl.filter((v) => v.url !== videoUrl)];
 
       pendingSeekTimeRef.current = 0;
       broadcastMovieAction('change_movie', {
-        mediaUrl: finalData.url,
+        mediaUrl: videoUrl,
         mediaTitle: file.name,
         uploadedBy: currentUser,
         currentTime: 0,
@@ -891,7 +917,7 @@ export default function MoviePlayer({
       socket?.emit('movie_action', {
         roomId,
         type: 'add_movie',
-        mediaUrl: finalData.url,
+        mediaUrl: videoUrl,
         mediaTitle: file.name,
         uploadedBy: currentUser,
         playlistItem: newVideoItem,

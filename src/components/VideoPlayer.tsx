@@ -260,37 +260,27 @@ export default function VideoPlayer({
     }
   };
 
-  // Upload movie or photo to server (/api/upload)
+  // Upload movie or photo (Client-side object URL for Netlify / static hosting compatibility)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
     setUploadError(null);
-    setUploadProgressMsg(`Uploading ${file.name} to lounge...`);
+    setUploadProgressMsg(`Loading ${file.name}...`);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!res.ok) {
-        throw new Error(`Upload failed (${res.status})`);
-      }
-
-      const data = await res.json();
+      const fileUrl = URL.createObjectURL(file);
+      const isImg = file.type.startsWith('image/');
+      const mediaType = isImg ? 'image' : 'video';
 
       isLocalActionRef.current = true;
       onMediaStateChange({
-        mediaUrl: data.url,
-        mediaType: data.mediaType,
-        mediaTitle: data.mediaTitle || file.name,
+        mediaUrl: fileUrl,
+        mediaType: mediaType,
+        mediaTitle: file.name,
         currentTime: 0,
-        isPlaying: data.mediaType !== 'image',
+        isPlaying: mediaType !== 'image',
         uploadedBy: currentUser
       });
 
@@ -299,8 +289,8 @@ export default function VideoPlayer({
         isLocalActionRef.current = false;
       }, 500);
     } catch (err: any) {
-      console.error('File upload error:', err);
-      setUploadError('Failed to upload file. Please try a different media file or choose a preset.');
+      console.error('File load error:', err);
+      setUploadError('Failed to load file. Please try a different media file or choose a preset.');
     } finally {
       setIsUploading(false);
       setUploadProgressMsg('');

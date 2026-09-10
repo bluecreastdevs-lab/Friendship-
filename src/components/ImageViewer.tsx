@@ -207,7 +207,7 @@ export default function ImageViewer({
     handleSelectImage(gallery[nextIdx]);
   };
 
-  // Handle local file upload
+  // Handle local file upload (Client-side object URL for Netlify / static hosting compatibility)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -221,25 +221,13 @@ export default function ImageViewer({
     setUploadError(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!res.ok) {
-        throw new Error(`Upload failed (${res.status})`);
-      }
-
-      const data = await res.json();
+      const fileUrl = URL.createObjectURL(file);
       const newImageItem: ImageItem = {
         id: `img-${Date.now()}`,
-        url: data.url,
+        url: fileUrl,
         title: file.name,
         uploadedBy: currentUser,
-        thumbnail: data.url,
+        thumbnail: fileUrl,
         timestamp: Date.now()
       };
 

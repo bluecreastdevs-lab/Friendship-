@@ -456,46 +456,33 @@ export default function MediaSyncPlayer({
     }
   };
 
-  // Upload movie or photo to server (/api/upload)
-  // Fixes the blob: URL bug by uploading the file directly to the backend
+  // Upload movie or photo (Client-side object URL for Netlify / static hosting compatibility)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
     setUploadError(null);
-    setUploadProgressMsg(`Uploading ${file.name} to server storage...`);
+    setUploadProgressMsg(`Loading ${file.name}...`);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!res.ok) {
-        throw new Error(`Upload failed (${res.status})`);
-      }
-
-      const data = await res.json();
-      // Server-accessible URL (e.g., /uploads/172578...-photo.jpg)
-      const serverAccessibleUrl = data.url;
+      const fileUrl = URL.createObjectURL(file);
+      const isImg = file.type.startsWith('image/');
+      const mediaType = isImg ? 'image' : 'video';
 
       broadcastMediaAction('change_media', {
-        mediaUrl: serverAccessibleUrl,
-        mediaType: data.mediaType,
-        mediaTitle: data.mediaTitle || file.name,
+        mediaUrl: fileUrl,
+        mediaType: mediaType,
+        mediaTitle: file.name,
         currentTime: 0,
-        isPlaying: data.mediaType !== 'image',
+        isPlaying: mediaType !== 'image',
         uploadedBy: currentUser
       });
 
       setImageZoom(1);
     } catch (err: any) {
-      console.error('File upload error:', err);
-      setUploadError('Failed to upload file to server. Please try a different media file or choose a preset.');
+      console.error('File load error:', err);
+      setUploadError('Failed to load file. Please try a different media file or choose a preset.');
     } finally {
       setIsUploading(false);
       setUploadProgressMsg('');
