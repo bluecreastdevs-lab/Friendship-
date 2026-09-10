@@ -1373,8 +1373,38 @@ export default function MoviePlayer({
             </button>
           </div>
 
-          <div className="text-xs text-slate-400 font-medium">
-            <span>{participants.length} watching movie together</span>
+          <div className="flex items-center space-x-2">
+            <div className="flex items-center -space-x-1.5 overflow-hidden py-0.5">
+              {participants.slice(0, 6).map((p) => {
+                const status = p.status || 'online';
+                return (
+                  <div
+                    key={p.socketId}
+                    className="relative group shrink-0 cursor-default"
+                    title={`${p.name} • ${status.toUpperCase()} (${p.statusReason || (status === 'online' ? 'Active in lounge' : 'Away')})`}
+                  >
+                    <div
+                      className="w-6 h-6 rounded-full flex items-center justify-center font-bold text-white text-[9px] shadow-sm border border-slate-900"
+                      style={{ backgroundColor: p.avatarColor || '#6366f1' }}
+                    >
+                      {p.name.slice(0, 2).toUpperCase()}
+                    </div>
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-900 ${
+                        status === 'online'
+                          ? 'bg-emerald-400'
+                          : status === 'away'
+                          ? 'bg-amber-400'
+                          : 'bg-rose-400'
+                      }`}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <span className="text-xs text-slate-400 font-medium">
+              <span>{participants.length} watching movie together</span>
+            </span>
           </div>
         </div>
       </div>

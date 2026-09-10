@@ -1,15 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, MessageSquare, Bell, BellOff } from 'lucide-react';
+import { Send, MessageSquare, Bell, BellOff, Users } from 'lucide-react';
 import { Socket } from 'socket.io-client';
-import { Message } from '../types';
+import { Message, Participant, UserStatus } from '../types';
+import ParticipantsList from './ParticipantsList';
 
 /**
  * Formats a timestamp into relative time (e.g., 'just now', '45s ago', '2m ago', '1h ago', 'yesterday', etc.)
  */
 function getRelativeTime(timestamp?: number | string): string {
   if (!timestamp) return '';
-  const timeMs = typeof timestamp === 'number' ? timestamp : Date.parse(timestamp);
-  if (isNaN(timeMs)) return '';
+  let timeMs: number = NaN;
+  if (typeof timestamp === 'number' && !isNaN(timestamp) && timestamp > 0) {
+    timeMs = timestamp;
+  } else if (typeof timestamp === 'string') {
+    const num = Number(timestamp);
+    if (!isNaN(num) && num > 0) {
+      timeMs = num;
+    } else {
+      timeMs = Date.parse(timestamp);
+    }
+  }
+  if (isNaN(timeMs) || timeMs <= 0) return '';
 
   const diffMs = Date.now() - timeMs;
   if (diffMs < 0) return 'just now';
@@ -32,19 +43,27 @@ function getRelativeTime(timestamp?: number | string): string {
 }
 
 /**
- * Returns localized time formatted in the user's browser local timezone (e.g., '10:02 PM')
+ * Returns localized time formatted in the user's browser local timezone (e.g., '07:17 AM' or '10:02 PM')
  */
 function getLocalTime(timestamp?: number | string, fallbackTime?: string): string {
-  if (typeof timestamp === 'number' && !isNaN(timestamp)) {
+  if (typeof timestamp === 'number' && !isNaN(timestamp) && timestamp > 0) {
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
   if (typeof timestamp === 'string') {
+    const num = Number(timestamp);
+    if (!isNaN(num) && num > 0) {
+      return new Date(num).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
     const parsed = Date.parse(timestamp);
     if (!isNaN(parsed)) {
       return new Date(parsed).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
   }
   if (fallbackTime) {
+    const numFallback = Number(fallbackTime);
+    if (!isNaN(numFallback) && numFallback > 0) {
+      return new Date(numFallback).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
     const parsedFallback = Date.parse(fallbackTime);
     if (!isNaN(parsedFallback)) {
       return new Date(parsedFallback).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -58,9 +77,32 @@ function getLocalTime(timestamp?: number | string, fallbackTime?: string): strin
  * Returns full date and time string for hover tooltips
  */
 function getFullDateTime(timestamp?: number | string, fallbackTime?: string): string {
-  const timeMs = typeof timestamp === 'number' ? timestamp : (timestamp ? Date.parse(timestamp) : NaN);
+  let timeMs: number = NaN;
+  if (typeof timestamp === 'number' && !isNaN(timestamp) && timestamp > 0) {
+    timeMs = timestamp;
+  } else if (typeof timestamp === 'string') {
+    const num = Number(timestamp);
+    if (!isNaN(num) && num > 0) {
+      timeMs = num;
+    } else {
+      timeMs = Date.parse(timestamp);
+    }
+  }
+
+  if (isNaN(timeMs) && fallbackTime) {
+    const num = Number(fallbackTime);
+    if (!isNaN(num) && num > 0) {
+      timeMs = num;
+    } else {
+      timeMs = Date.parse(fallbackTime);
+    }
+  }
+
   if (!isNaN(timeMs)) {
-    return new Date(timeMs).toLocaleString();
+    return new Date(timeMs).toLocaleString([], {
+      dateStyle: 'medium',
+      timeStyle: 'medium'
+    });
   }
   return fallbackTime || '';
 }
@@ -71,13 +113,44 @@ interface ChatDrawerProps {
   currentUser: string;
   roomId?: string;
   socket?: Socket | null;
+  participants?: Participant[];
+  onSetStatus?: (status: UserStatus | 'auto') => void;
+  currentStatus?: UserStatus;
+  manualOverride?: UserStatus | null;
+  statusReason?: string;
+  activeDrawerTab?: 'chat' | 'members';
+  onTabChange?: (tab: 'chat' | 'members') => void;
+  avatarColor?: string;
+  onChangeAvatarColor?: (color: string) => void;
 }
 
-export default function ChatDrawer({ messages, onSendMessage, currentUser, roomId, socket }: ChatDrawerProps) {
+export default function ChatDrawer({
+  messages,
+  onSendMessage,
+  currentUser,
+  roomId,
+  socket,
+  participants = [],
+  onSetStatus,
+  currentStatus = 'online',
+  manualOverride = null,
+  statusReason,
+  activeDrawerTab,
+  onTabChange,
+  avatarColor,
+  onChangeAvatarColor
+}: ChatDrawerProps) {
   const [input, setInput] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [typingUsers, setTypingUsers] = useState<Record<string, { userName: string; timestamp: number }>>({});
   const [, setRelativeTick] = useState(0);
+  const [localTab, setLocalTab] = useState<'chat' | 'members'>('chat');
+
+  const activeTab = activeDrawerTab !== undefined ? activeDrawerTab : localTab;
+  const setActiveTab = (tab: 'chat' | 'members') => {
+    setLocalTab(tab);
+    if (onTabChange) onTabChange(tab);
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -150,7 +223,7 @@ export default function ChatDrawer({ messages, onSendMessage, currentUser, roomI
   useEffect(() => {
     const interval = setInterval(() => {
       setRelativeTick((prev) => prev + 1);
-    }, 15000);
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -263,137 +336,234 @@ export default function ChatDrawer({ messages, onSendMessage, currentUser, roomI
 
   return (
     <div className="flex flex-col h-full w-full bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-700/50 overflow-hidden shadow-2xl">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-950/50 border-b border-slate-800">
-        <div className="flex items-center space-x-2">
-          <MessageSquare className="w-4 h-4 text-indigo-400" />
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-            SYNCSPACE LOUNGE #{roomId ? roomId.replace(/[^0-9]/g, '') || '7' : '7'}
-          </h3>
+      {/* Header with Chat / Members Tab Navigation */}
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-950/60 border-b border-slate-800">
+        <div className="flex items-center space-x-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
+          <button
+            type="button"
+            onClick={() => setActiveTab('chat')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === 'chat'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Chat</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('members')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === 'members'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Members</span>
+            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-300 font-mono">
+              {participants.length}
+            </span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+          </button>
         </div>
-        <button
-          onClick={() => setSoundEnabled(!soundEnabled)}
-          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-          title={soundEnabled ? "Mute notification chime" : "Enable notification chime"}
-        >
-          {soundEnabled ? <Bell className="w-4 h-4 text-indigo-400" /> : <BellOff className="w-4 h-4 text-slate-400" />}
-        </button>
+
+        <div className="flex items-center space-x-1.5">
+          <button
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            title={soundEnabled ? "Mute notification chime" : "Enable notification chime"}
+          >
+            {soundEnabled ? <Bell className="w-4 h-4 text-indigo-400" /> : <BellOff className="w-4 h-4 text-slate-400" />}
+          </button>
+        </div>
       </div>
 
-      {/* Messages Feed */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.map((msg) => {
-          const isSystem = msg.sender === 'System';
-          const isMe = msg.sender === currentUser;
-          const relTime = getRelativeTime(msg.timestamp || msg.time);
-          const locTime = getLocalTime(msg.timestamp, msg.time);
-          const fullDate = getFullDateTime(msg.timestamp, msg.time);
+      {/* Main Drawer Body: Members Tab OR Chat Messages Feed */}
+      {activeTab === 'members' ? (
+        <div className="flex-1 min-h-0 flex flex-col">
+          <ParticipantsList
+            participants={participants}
+            currentUser={currentUser}
+            currentUserSocketId={socket?.id}
+            onSetStatus={onSetStatus}
+            currentStatus={currentStatus}
+            manualOverride={manualOverride}
+            statusReason={statusReason}
+            avatarColor={avatarColor}
+            onChangeAvatarColor={onChangeAvatarColor}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Messages Feed */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {messages.map((msg) => {
+              const isSystem = msg.sender === 'System';
+              const isMe = msg.sender === currentUser;
+              const relTime = getRelativeTime(msg.timestamp || msg.time);
+              const locTime = getLocalTime(msg.timestamp, msg.time);
+              const fullDate = getFullDateTime(msg.timestamp, msg.time);
 
-          if (isSystem) {
-            return (
-              <div key={msg.id} className="flex justify-center my-1.5">
-                <span
-                  className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1 bg-slate-800/80 hover:bg-slate-800 text-slate-300 rounded-full border border-slate-700/50 shadow-sm transition-colors cursor-default select-none"
-                  title={fullDate}
-                >
-                  <span className="text-slate-300 font-medium">{msg.text}</span>
-                  <span className="text-slate-500">•</span>
-                  {relTime ? (
-                    <>
-                      <span className="text-indigo-400 font-medium">{relTime}</span>
-                      {locTime && <span className="text-slate-400 text-[10px]">({locTime})</span>}
-                    </>
-                  ) : (
-                    <span className="text-slate-400 font-medium">{locTime}</span>
-                  )}
-                </span>
-              </div>
-            );
-          }
+              if (isSystem) {
+                const lowerText = (msg.text || '').toLowerCase();
+                const isJoin = lowerText.includes('joined');
+                const isLeave = lowerText.includes('left');
 
-          return (
-            <div
-              key={msg.id}
-              className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
-            >
-              <div className="flex items-center space-x-1.5 mb-1 px-1">
-                <div
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: msg.avatarColor || '#6366f1' }}
-                />
-                <span className="text-xs font-semibold text-slate-300">{msg.sender}</span>
-                <span
-                  className="text-[10px] text-slate-400 cursor-default flex items-center gap-1 font-mono tracking-tight"
-                  title={fullDate}
-                >
-                  {relTime ? (
-                    <>
-                      <span className="text-indigo-300 font-medium">{relTime}</span>
+                return (
+                  <div key={msg.id} className="flex justify-center my-1.5 px-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-full border shadow-sm transition-colors cursor-default select-none ${
+                        isJoin
+                          ? 'bg-emerald-950/50 text-emerald-300 border-emerald-500/30'
+                          : isLeave
+                          ? 'bg-rose-950/50 text-rose-300 border-rose-500/30'
+                          : 'bg-slate-800/80 text-slate-300 border-slate-700/50'
+                      }`}
+                      title={fullDate ? `Exact time: ${fullDate}` : undefined}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                          isJoin
+                            ? 'bg-emerald-400 animate-pulse'
+                            : isLeave
+                            ? 'bg-rose-400'
+                            : 'bg-slate-400'
+                        }`}
+                      />
+                      <span className="font-medium">{msg.text}</span>
+                      <span className="opacity-40">•</span>
                       {locTime && (
-                        <span className="text-slate-500 font-normal font-sans">({locTime})</span>
+                        <span className="font-mono font-semibold text-slate-200">
+                          {locTime}
+                        </span>
                       )}
-                    </>
-                  ) : (
-                    <span className="text-slate-400 font-sans">{locTime}</span>
-                  )}
-                </span>
-              </div>
+                      {relTime && relTime !== 'just now' && (
+                        <span className="text-slate-400 text-[10px]">
+                          ({relTime})
+                        </span>
+                      )}
+                      {relTime === 'just now' && (
+                        <span className="text-emerald-400 font-medium text-[10px]">
+                          (just now)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              }
 
-              <div
-                className={`max-w-[85%] px-3.5 py-2 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                  isMe
-                    ? 'bg-indigo-600 text-white rounded-br-sm'
-                    : 'bg-slate-800 text-slate-200 rounded-bl-sm border border-slate-700/60'
-                }`}
-              >
-                {msg.text}
-              </div>
-            </div>
-          );
-        })}
-        <div ref={messagesEndRef} />
-      </div>
+              const senderParticipant = participants.find((p) => p.name === msg.sender);
+              const senderStatus = senderParticipant?.status || 'online';
 
-      {/* Real-Time 'Is Typing...' Indicator */}
-      {activeTypingNames.length > 0 && (
-        <div
-          id="chat-typing-indicator"
-          className="px-4 py-2 bg-slate-950/70 border-t border-slate-800/80 flex items-center space-x-2 text-xs text-indigo-300 select-none animate-fadeIn transition-all duration-200"
-        >
-          <div className="flex items-center space-x-1">
-            <span
-              className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
-              style={{ animationDuration: '800ms', animationDelay: '0ms' }}
-            />
-            <span
-              className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
-              style={{ animationDuration: '800ms', animationDelay: '150ms' }}
-            />
-            <span
-              className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
-              style={{ animationDuration: '800ms', animationDelay: '300ms' }}
-            />
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+                >
+                  <div className="flex items-center space-x-1.5 mb-1 px-1">
+                    <div className="relative">
+                      <div
+                        className="w-2.5 h-2.5 rounded-full"
+                        style={{ backgroundColor: msg.avatarColor || '#6366f1' }}
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-slate-300">{msg.sender}</span>
+
+                    {/* Status Dot next to username in chat */}
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        senderStatus === 'online'
+                          ? 'bg-emerald-400 ring-1 ring-emerald-400/40'
+                          : senderStatus === 'away'
+                          ? 'bg-amber-400 ring-1 ring-amber-400/40'
+                          : 'bg-rose-400 ring-1 ring-rose-400/40'
+                      }`}
+                      title={
+                        senderParticipant
+                          ? `${senderParticipant.name} is ${senderStatus.toUpperCase()} (${
+                              senderParticipant.statusReason || (senderStatus === 'online' ? 'Active' : 'Away')
+                            })`
+                          : `${msg.sender} (${senderStatus})`
+                      }
+                    />
+
+                    <span
+                      className="text-[10px] text-slate-400 cursor-default flex items-center gap-1 font-mono tracking-tight"
+                      title={fullDate}
+                    >
+                      {relTime ? (
+                        <>
+                          <span className="text-indigo-300 font-medium">{relTime}</span>
+                          {locTime && (
+                            <span className="text-slate-500 font-normal font-sans">({locTime})</span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-slate-400 font-sans">{locTime}</span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div
+                    className={`max-w-[85%] px-3.5 py-2 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                      isMe
+                        ? 'bg-indigo-600 text-white rounded-br-sm'
+                        : 'bg-slate-800 text-slate-200 rounded-bl-sm border border-slate-700/60'
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+                </div>
+              );
+            })}
+            <div ref={messagesEndRef} />
           </div>
-          <span className="font-medium italic tracking-wide">{typingText}</span>
-        </div>
-      )}
 
-      {/* Input Box */}
-      <form onSubmit={handleSubmit} className="p-3 bg-slate-950/80 border-t border-slate-800 flex items-center space-x-2">
-        <input
-          type="text"
-          placeholder="Type a message..."
-          value={input}
-          onChange={handleInputChange}
-          className="flex-1 px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors"
-        />
-        <button
-          type="submit"
-          className="p-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl transition-colors shadow-lg active:scale-95"
-        >
-          <Send className="w-4 h-4" />
-        </button>
-      </form>
+          {/* Real-Time 'Is Typing...' Indicator */}
+          {activeTypingNames.length > 0 && (
+            <div
+              id="chat-typing-indicator"
+              className="px-4 py-2 bg-slate-950/70 border-t border-slate-800/80 flex items-center space-x-2 text-xs text-indigo-300 select-none animate-fadeIn transition-all duration-200"
+            >
+              <div className="flex items-center space-x-1">
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                  style={{ animationDuration: '800ms', animationDelay: '0ms' }}
+                />
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                  style={{ animationDuration: '800ms', animationDelay: '150ms' }}
+                />
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                  style={{ animationDuration: '800ms', animationDelay: '300ms' }}
+                />
+              </div>
+              <span className="font-medium italic tracking-wide">{typingText}</span>
+            </div>
+          )}
+
+          {/* Input Box */}
+          <form onSubmit={handleSubmit} className="p-3 bg-slate-950/80 border-t border-slate-800 flex items-center space-x-2">
+            <input
+              type="text"
+              placeholder="Type a message..."
+              value={input}
+              onChange={handleInputChange}
+              className="flex-1 px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+            <button
+              type="submit"
+              className="p-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl transition-colors shadow-lg active:scale-95"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </>
+      )}
     </div>
   );
 }

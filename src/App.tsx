@@ -5,22 +5,59 @@ import MoviePlayer from './components/MoviePlayer';
 import ImageViewer from './components/ImageViewer';
 import ChatDrawer from './components/ChatDrawer';
 import VoiceCall from './components/VoiceCall';
-import { Film, Image as ImageIcon, Copy, Check, Users, ExternalLink, Sparkles, Share2, X, MessageCircle } from 'lucide-react';
-import { Participant, Message, MovieState, ImageState, MovieActionPayload, ImageActionPayload } from './types';
+import { Film, Image as ImageIcon, Copy, Check, Users, ExternalLink, Sparkles, Share2, X, MessageCircle, LogOut } from 'lucide-react';
+import { Participant, Message, MovieState, ImageState, MovieActionPayload, ImageActionPayload, UserStatus } from './types';
+import { useUserPresence } from './hooks/useUserPresence';
 
-const AVATAR_COLORS = ['#6366f1', '#ec4899', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6'];
+export const AVATAR_COLORS = ['#6366f1', '#ec4899', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6'];
+
+export const STORAGE_KEYS = {
+  USER_NAME: 'syncspace_user_name',
+  AVATAR_COLOR: 'syncspace_avatar_color',
+  ROOM_ID: 'syncspace_last_room_id'
+} as const;
 
 export default function App() {
   const [inLounge, setInLounge] = useState(false);
-  const [userName, setUserName] = useState('');
+  const [userName, setUserName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const nameParam = params.get('name');
+        if (nameParam && nameParam.trim()) return nameParam.trim();
+
+        const saved = localStorage.getItem(STORAGE_KEYS.USER_NAME);
+        if (saved && saved.trim()) return saved.trim();
+      } catch (_) {}
+    }
+    return '';
+  });
+
   const [roomId, setRoomId] = useState(() => {
     if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('room') || 'lounge-101';
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const queryRoom = params.get('room');
+        if (queryRoom && queryRoom.trim()) return queryRoom.trim();
+
+        const saved = localStorage.getItem(STORAGE_KEYS.ROOM_ID);
+        if (saved && saved.trim()) return saved.trim();
+      } catch (_) {}
     }
     return 'lounge-101';
   });
-  const [avatarColor, setAvatarColor] = useState(AVATAR_COLORS[0]);
+
+  const [avatarColor, setAvatarColor] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEYS.AVATAR_COLOR);
+        if (saved && AVATAR_COLORS.includes(saved)) return saved;
+      } catch (_) {}
+    }
+    return AVATAR_COLORS[0];
+  });
+
+  const [hasSavedPreferences, setHasSavedPreferences] = useState(false);
   const [copiedRoom, setCopiedRoom] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
 
@@ -36,6 +73,14 @@ export default function App() {
   // Participants & Messages
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+
+  // Real-time user status with Tab Visibility API detection & idle tracking
+  const { currentStatus, manualOverride, statusReason, setStatus } = useUserPresence({
+    socket,
+    roomId,
+    enabled: inLounge
+  });
+  const [chatDrawerTab, setChatDrawerTab] = useState<'chat' | 'members'>('chat');
 
   // Movie State (Independent sync channel)
   const [movieState, setMovieState] = useState<MovieState>({
@@ -88,32 +133,90 @@ export default function App() {
 
   const [activeSideTab, setActiveSideTab] = useState<'chat' | 'voice'>('chat');
 
-  // Check URL search parameters on load (supports opening movie or image in a dedicated new tab!)
+  // Check saved preferences in localStorage and parse URL parameters
   useEffect(() => {
     try {
+      const hasName = Boolean(localStorage.getItem(STORAGE_KEYS.USER_NAME));
+      const hasRoom = Boolean(localStorage.getItem(STORAGE_KEYS.ROOM_ID));
+      const hasColor = Boolean(localStorage.getItem(STORAGE_KEYS.AVATAR_COLOR));
+      if (hasName || hasRoom || hasColor) {
+        setHasSavedPreferences(true);
+      }
+
       const params = new URLSearchParams(window.location.search);
       const roomParam = params.get('room');
       const tabParam = params.get('tab');
       const nameParam = params.get('name');
 
-      if (roomParam) {
-        setRoomId(roomParam);
+      if (roomParam && roomParam.trim()) {
+        setRoomId(roomParam.trim());
       }
       if (tabParam === 'image' || tabParam === 'movie') {
         setMediaTab(tabParam);
       }
 
-      if (nameParam) {
-        setUserName(nameParam);
-      } else if (roomParam) {
-        // Generate random guest name if joined via room link
-        setUserName(`User_${Math.floor(1000 + Math.random() * 9000)}`);
+      if (nameParam && nameParam.trim()) {
+        setUserName(nameParam.trim());
+      } else if (roomParam && roomParam.trim()) {
+        const savedName = localStorage.getItem(STORAGE_KEYS.USER_NAME);
+        if (savedName && savedName.trim()) {
+          setUserName(savedName.trim());
+        } else {
+          setUserName(`User_${Math.floor(1000 + Math.random() * 9000)}`);
+        }
       }
     } catch (_) {}
   }, []);
 
+  // Persist user preferences to localStorage whenever values change
+  useEffect(() => {
+    try {
+      if (userName.trim()) {
+        localStorage.setItem(STORAGE_KEYS.USER_NAME, userName.trim());
+      }
+    } catch (_) {}
+  }, [userName]);
+
+  useEffect(() => {
+    try {
+      if (roomId.trim()) {
+        localStorage.setItem(STORAGE_KEYS.ROOM_ID, roomId.trim());
+      }
+    } catch (_) {}
+  }, [roomId]);
+
+  useEffect(() => {
+    try {
+      if (avatarColor) {
+        localStorage.setItem(STORAGE_KEYS.AVATAR_COLOR, avatarColor);
+      }
+    } catch (_) {}
+  }, [avatarColor]);
+
+  // Allows switching avatar color anytime (on join screen or live in lounge)
+  const handleChangeAvatarColor = (color: string) => {
+    setAvatarColor(color);
+    try {
+      localStorage.setItem(STORAGE_KEYS.AVATAR_COLOR, color);
+    } catch (_) {}
+    if (socketRef.current && roomId) {
+      socketRef.current.emit('update-user-profile', {
+        roomId,
+        name: userName,
+        avatarColor: color
+      });
+    }
+  };
+
   // Connect to room with robust exponential backoff reconnection strategy
   const connectToRoom = (targetRoomId: string, name: string, color: string) => {
+    // Persist immediately on room entry
+    try {
+      if (name.trim()) localStorage.setItem(STORAGE_KEYS.USER_NAME, name.trim());
+      if (targetRoomId.trim()) localStorage.setItem(STORAGE_KEYS.ROOM_ID, targetRoomId.trim());
+      if (color) localStorage.setItem(STORAGE_KEYS.AVATAR_COLOR, color);
+    } catch (_) {}
+
     const newSocket = io({
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -128,7 +231,8 @@ export default function App() {
     const joinData = {
       roomId: targetRoomId.trim(),
       name: name.trim(),
-      avatarColor: color
+      avatarColor: color,
+      timestamp: Date.now()
     };
 
     newSocket.on('connect', () => {
@@ -154,7 +258,7 @@ export default function App() {
       setConnectionStatus('connected');
       setReconnectAttemptCount(0);
       console.log(`Socket successfully reconnected after ${attempt} attempts. Re-syncing room state.`);
-      newSocket.emit('join-room', joinData);
+      newSocket.emit('join-room', { ...joinData, timestamp: Date.now() });
       newSocket.emit('request-sync', { roomId: targetRoomId.trim() });
     });
 
@@ -181,7 +285,13 @@ export default function App() {
         setParticipants(state.participants);
       }
       if (state.messages) {
-        setMessages(state.messages);
+        const normalized = state.messages.map((m: Message) => ({
+          ...m,
+          timestamp: typeof m.timestamp === 'number' && m.timestamp > 0
+            ? m.timestamp
+            : (m.time && !isNaN(Date.parse(m.time)) ? Date.parse(m.time) : Date.now())
+        }));
+        setMessages(normalized);
       }
     });
 
@@ -216,8 +326,14 @@ export default function App() {
       setParticipants(updatedParticipants);
     });
 
-    newSocket.on('chat-message', (msg) => {
-      setMessages((prev) => [...prev, msg]);
+    newSocket.on('chat-message', (msg: Message) => {
+      const normalized: Message = {
+        ...msg,
+        timestamp: typeof msg.timestamp === 'number' && msg.timestamp > 0
+          ? msg.timestamp
+          : (msg.time && !isNaN(Date.parse(msg.time)) ? Date.parse(msg.time) : Date.now())
+      };
+      setMessages((prev) => [...prev, normalized]);
     });
 
     setInLounge(true);
@@ -227,6 +343,22 @@ export default function App() {
     e.preventDefault();
     if (!userName.trim() || !roomId.trim()) return;
     connectToRoom(roomId, userName, avatarColor);
+  };
+
+  const handleLeaveLounge = () => {
+    if (socketRef.current && roomId) {
+      socketRef.current.emit('leave-room', {
+        roomId,
+        name: userName,
+        timestamp: Date.now()
+      });
+      socketRef.current.disconnect();
+    }
+    setInLounge(false);
+    setSocket(null);
+    socketRef.current = null;
+    setParticipants([]);
+    setMessages([]);
   };
 
   // State handlers
@@ -314,7 +446,15 @@ export default function App() {
 
           <form onSubmit={handleJoinRoom} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-300">Your Name</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-300">Your Name</label>
+                {hasSavedPreferences && userName.trim() && (
+                  <span className="text-[10px] text-indigo-400 font-medium flex items-center space-x-1">
+                    <Check className="w-3 h-3 text-indigo-400" />
+                    <span>Saved</span>
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 placeholder="Enter your display name"
@@ -326,7 +466,15 @@ export default function App() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-300">Lounge Room ID</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-300">Lounge Room ID</label>
+                {hasSavedPreferences && roomId.trim() && (
+                  <span className="text-[10px] text-indigo-400 font-medium flex items-center space-x-1">
+                    <Check className="w-3 h-3 text-indigo-400" />
+                    <span>Last used room</span>
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 placeholder="e.g. movie-night-101"
@@ -338,17 +486,21 @@ export default function App() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-300">Choose Avatar Color</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-300">Choose Avatar Color</label>
+                <span className="text-[10px] text-slate-400">Saved preference</span>
+              </div>
               <div className="flex items-center space-x-3 py-1">
                 {AVATAR_COLORS.map((color) => (
                   <button
                     key={color}
                     type="button"
                     onClick={() => setAvatarColor(color)}
-                    className={`w-8 h-8 rounded-full transition-transform ${
-                      avatarColor === color ? 'ring-2 ring-white scale-110' : 'opacity-70 hover:opacity-100'
+                    className={`w-8 h-8 rounded-full transition-transform cursor-pointer ${
+                      avatarColor === color ? 'ring-2 ring-white scale-110 shadow-lg' : 'opacity-70 hover:opacity-100'
                     }`}
                     style={{ backgroundColor: color }}
+                    title={`Select ${color} as your preferred avatar color`}
                   />
                 ))}
               </div>
@@ -356,10 +508,14 @@ export default function App() {
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all transform hover:-translate-y-0.5"
+              className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all transform hover:-translate-y-0.5 cursor-pointer"
             >
               Enter Synced Lounge
             </button>
+
+            <p className="text-center text-[11px] text-slate-400 pt-1">
+              Your name, preferred avatar color, and last visited room are remembered automatically.
+            </p>
           </form>
         </div>
       </div>
@@ -458,20 +614,72 @@ export default function App() {
             <span>Open {mediaTab === 'image' ? 'Image' : 'Movie'} in New Tab</span>
           </button>
 
-          <div className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1 bg-slate-800/80 rounded-xl border border-slate-700 text-xs text-slate-300">
+          {/* Members count button (opens members tab) */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveSideTab('chat');
+              setChatDrawerTab('members');
+            }}
+            className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700/80 rounded-xl border border-slate-700 text-xs text-slate-300 transition-colors cursor-pointer"
+            title="View Lounge Members & Online Status"
+          >
             <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400 shrink-0" />
             <span className="font-semibold text-white text-[11px] sm:text-xs">{participants.length}</span>
-          </div>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+          </button>
 
-          <div className="flex items-center space-x-1.5 px-1.5 sm:px-2.5 py-1 bg-slate-800/80 rounded-full border border-slate-700">
-            <div
-              className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-[9px] shrink-0"
-              style={{ backgroundColor: avatarColor }}
-            >
-              {userName.slice(0, 2).toUpperCase()}
+          {/* User profile & presence indicator pill */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveSideTab('chat');
+              setChatDrawerTab('members');
+            }}
+            className="flex items-center space-x-1.5 px-1.5 sm:px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700/80 rounded-full border border-slate-700 transition-colors text-left"
+            title={`Your status: ${currentStatus.toUpperCase()} (${statusReason || 'Active in lounge'}) • Click to change`}
+          >
+            <div className="relative shrink-0">
+              <div
+                className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-[9px]"
+                style={{ backgroundColor: avatarColor }}
+              >
+                {userName.slice(0, 2).toUpperCase()}
+              </div>
+              <span
+                className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-900 ${
+                  currentStatus === 'online'
+                    ? 'bg-emerald-400'
+                    : currentStatus === 'away'
+                    ? 'bg-amber-400'
+                    : 'bg-rose-400'
+                }`}
+              />
             </div>
             <span className="text-xs font-medium text-slate-200 hidden sm:inline">{userName}</span>
-          </div>
+            <span
+              className={`hidden md:inline-block text-[9px] px-1.5 py-0.2 rounded font-semibold capitalize ${
+                currentStatus === 'online'
+                  ? 'text-emerald-300 bg-emerald-500/10'
+                  : currentStatus === 'away'
+                  ? 'text-amber-300 bg-amber-500/10'
+                  : 'text-rose-300 bg-rose-500/10'
+              }`}
+            >
+              {currentStatus}
+            </span>
+          </button>
+
+          {/* Leave Lounge / Logout button */}
+          <button
+            type="button"
+            onClick={handleLeaveLounge}
+            className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1 bg-slate-800/80 hover:bg-rose-950/60 text-slate-300 hover:text-rose-200 rounded-xl border border-slate-700 hover:border-rose-500/50 text-xs font-medium transition-all shadow-sm cursor-pointer"
+            title="Leave Lounge & Log Out"
+          >
+            <LogOut className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-rose-400 shrink-0" />
+            <span className="hidden sm:inline">Leave</span>
+          </button>
         </div>
       </header>
 
@@ -535,6 +743,15 @@ export default function App() {
                 currentUser={userName}
                 roomId={roomId}
                 socket={socket}
+                participants={participants}
+                onSetStatus={setStatus}
+                currentStatus={currentStatus}
+                manualOverride={manualOverride}
+                statusReason={statusReason}
+                activeDrawerTab={chatDrawerTab}
+                onTabChange={setChatDrawerTab}
+                avatarColor={avatarColor}
+                onChangeAvatarColor={handleChangeAvatarColor}
               />
             </div>
           </div>

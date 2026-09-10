@@ -915,20 +915,45 @@ export default function MediaSyncPlayer({
       {/* Participants & Footer Information */}
       <div className="flex flex-col sm:flex-row items-center justify-between mt-3 pt-3 border-t border-slate-800/80 px-1 gap-2">
         <div className="flex items-center space-x-3 overflow-x-auto w-full sm:w-auto py-1">
-          {participants.map((p, idx) => (
-            <div key={p.socketId} className="flex flex-col items-center space-y-1 shrink-0">
+          {participants.map((p, idx) => {
+            const status = p.status || 'online';
+            return (
               <div
-                className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-[11px] shadow-lg border-2"
-                style={{
-                  backgroundColor: p.avatarColor,
-                  borderColor: idx === 0 ? '#10b981' : '#475569'
-                }}
+                key={p.socketId}
+                className="flex flex-col items-center space-y-1 shrink-0 group cursor-default"
+                title={`${p.name} • ${status.toUpperCase()} (${p.statusReason || (status === 'online' ? 'Active in lounge' : 'Away')})`}
               >
-                {p.name.slice(0, 2).toUpperCase()}
+                <div className="relative">
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-[11px] shadow-lg border-2"
+                    style={{
+                      backgroundColor: p.avatarColor || '#6366f1',
+                      borderColor: idx === 0 ? '#10b981' : '#475569'
+                    }}
+                  >
+                    {p.name.slice(0, 2).toUpperCase()}
+                  </div>
+                  <span
+                    className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-slate-900 ${
+                      status === 'online'
+                        ? 'bg-emerald-400'
+                        : status === 'away'
+                        ? 'bg-amber-400'
+                        : 'bg-rose-400'
+                    }`}
+                  />
+                </div>
+                <div className="flex items-center space-x-1 max-w-[80px]">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      status === 'online' ? 'bg-emerald-400' : status === 'away' ? 'bg-amber-400' : 'bg-rose-400'
+                    }`}
+                  />
+                  <span className="text-[10px] text-slate-300 font-medium truncate">{p.name}</span>
+                </div>
               </div>
-              <span className="text-[10px] text-slate-300 font-medium truncate max-w-[65px]">{p.name}</span>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="text-[11px] uppercase tracking-wider text-slate-400 font-mono text-center sm:text-right">

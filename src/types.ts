@@ -1,8 +1,15 @@
+export type UserStatus = 'online' | 'away' | 'busy';
+
 export interface Participant {
   socketId: string;
   name: string;
   avatarColor: string;
   isMuted: boolean;
+  status?: UserStatus;
+  statusUpdatedAt?: number;
+  joinedAt?: number;
+  tabHiddenAt?: number;
+  statusReason?: string;
 }
 
 export interface Message {

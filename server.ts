@@ -56,8 +56,19 @@ async function startServer() {
         const raw = fs.readFileSync(DB_FILE, "utf-8");
         const parsed = JSON.parse(raw);
         for (const [roomId, roomData] of Object.entries(parsed as Record<string, any>)) {
+          // Normalize messages to ensure accurate timestamps
+          const normalizedMessages = Array.isArray(roomData.messages)
+            ? roomData.messages.map((m: any) => ({
+                ...m,
+                timestamp: typeof m.timestamp === 'number' && m.timestamp > 0
+                  ? m.timestamp
+                  : (m.time && !isNaN(Date.parse(m.time)) ? Date.parse(m.time) : Date.now())
+              }))
+            : [];
+
           map.set(roomId, {
             ...roomData,
+            messages: normalizedMessages,
             participants: new Map() // Ephemeral connected sockets
           });
         }
@@ -295,7 +306,17 @@ async function startServer() {
     console.log(`User connected: ${socket.id}`);
 
     // Join room handler (supports both 'join_room' and 'join-room')
-    const handleJoin = ({ roomId, name, avatarColor }: { roomId: string; name?: string; avatarColor?: string }) => {
+    const handleJoin = ({
+      roomId,
+      name,
+      avatarColor,
+      timestamp
+    }: {
+      roomId: string;
+      name?: string;
+      avatarColor?: string;
+      timestamp?: number;
+    }) => {
       socket.join(roomId);
       
       if (!rooms.has(roomId)) {
@@ -413,11 +434,19 @@ async function startServer() {
         room.messages = [];
       }
 
+      const joinTimestamp = (typeof timestamp === 'number' && timestamp > 0)
+        ? timestamp
+        : Date.now();
+
       room.participants.set(socket.id, {
         socketId: socket.id,
         name: name || `User_${socket.id.slice(0, 4)}`,
         avatarColor: avatarColor || "#6366f1",
-        isMuted: false
+        isMuted: false,
+        status: 'online',
+        statusUpdatedAt: joinTimestamp,
+        joinedAt: joinTimestamp,
+        statusReason: 'Active in lounge'
       });
 
       const syncedMovie = getSyncedMovieState(room);
@@ -443,12 +472,13 @@ async function startServer() {
       // Broadcast updated participants list to room
       io.to(roomId).emit("participants-update", Array.from(room.participants.values()));
 
-      // System chat message
+      // System chat message for user login / join
       const joinMsg = {
         id: Math.random().toString(36).substring(2, 9),
         sender: "System",
         text: `${name || "A user"} joined the lounge.`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: joinTimestamp,
+        time: new Date(joinTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         avatarColor: "#9ca3af"
       };
       room.messages.push(joinMsg);
@@ -864,10 +894,15 @@ async function startServer() {
     socket.on("chat-message", ({ roomId, message }) => {
       const room = rooms.get(roomId);
       if (room) {
+        const msgTimestamp = (typeof message?.timestamp === 'number' && message.timestamp > 0)
+          ? message.timestamp
+          : Date.now();
+
         const fullMsg = {
-          id: Math.random().toString(36).substring(2, 9),
+          id: message?.id || Math.random().toString(36).substring(2, 9),
           ...message,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          timestamp: msgTimestamp,
+          time: new Date(msgTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         if (!room.messages) room.messages = [];
         room.messages.push(fullMsg);
@@ -886,6 +921,101 @@ async function startServer() {
       }
     });
 
+    // User presence & status updates (Online / Away / Busy via Visibility Change API or user toggle)
+    const handleStatusChange = ({
+      roomId,
+      status,
+      statusReason,
+      tabHiddenAt
+    }: {
+      roomId: string;
+      status: 'online' | 'away' | 'busy';
+      statusReason?: string;
+      tabHiddenAt?: number;
+    }) => {
+      const room = rooms.get(roomId);
+      if (room && room.participants && room.participants.has(socket.id)) {
+        const p = room.participants.get(socket.id);
+        const validStatuses: Array<'online' | 'away' | 'busy'> = ['online', 'away', 'busy'];
+        if (validStatuses.includes(status)) {
+          p.status = status;
+          p.statusUpdatedAt = Date.now();
+          p.statusReason = statusReason || (status === 'online' ? 'Active in lounge' : status === 'away' ? 'Switched tab' : 'Busy');
+          if (status === 'away') {
+            p.tabHiddenAt = tabHiddenAt || Date.now();
+          } else {
+            p.tabHiddenAt = undefined;
+          }
+          io.to(roomId).emit("participants-update", Array.from(room.participants.values()));
+        }
+      }
+    };
+
+    socket.on("user-status-change", handleStatusChange);
+    socket.on("user_status_change", handleStatusChange);
+
+    // Update user profile (such as avatarColor or display name)
+    const handleUpdateProfile = ({
+      roomId,
+      name,
+      avatarColor
+    }: {
+      roomId: string;
+      name?: string;
+      avatarColor?: string;
+    }) => {
+      const room = rooms.get(roomId);
+      if (room && room.participants && room.participants.has(socket.id)) {
+        const p = room.participants.get(socket.id);
+        if (name && name.trim()) p.name = name.trim();
+        if (avatarColor) p.avatarColor = avatarColor;
+        io.to(roomId).emit("participants-update", Array.from(room.participants.values()));
+      }
+    };
+
+    socket.on("update-user-profile", handleUpdateProfile);
+    socket.on("update_user_profile", handleUpdateProfile);
+
+    // Explicit user logout / leave lounge handler
+    const handleUserLeave = ({
+      roomId,
+      name,
+      timestamp
+    }: {
+      roomId: string;
+      name?: string;
+      timestamp?: number;
+    }) => {
+      const room = rooms.get(roomId);
+      if (room && room.participants && room.participants.has(socket.id)) {
+        const participant = room.participants.get(socket.id);
+        room.participants.delete(socket.id);
+
+        io.to(roomId).emit("participants-update", Array.from(room.participants.values()));
+
+        const leaveTimestamp = (typeof timestamp === 'number' && timestamp > 0) ? timestamp : Date.now();
+        const leaveMsg = {
+          id: Math.random().toString(36).substring(2, 9),
+          sender: "System",
+          text: `${participant?.name || name || "A user"} left the lounge.`,
+          timestamp: leaveTimestamp,
+          time: new Date(leaveTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          avatarColor: "#9ca3af"
+        };
+        room.messages.push(leaveMsg);
+        saveRoomsDb();
+        io.to(roomId).emit("chat-message", leaveMsg);
+      }
+    };
+
+    socket.on("leave-room", handleUserLeave);
+    socket.on("leave_room", handleUserLeave);
+
+    // Typing status broadcasting
+    socket.on("typing", ({ roomId, userName, isTyping }: { roomId: string; userName: string; isTyping: boolean }) => {
+      socket.to(roomId).emit("typing", { roomId, userName, isTyping, socketId: socket.id });
+    });
+
     // WebRTC Signaling
     socket.on("webrtc-offer", ({ roomId, offer, targetSocketId }) => {
       io.to(targetSocketId).emit("webrtc-offer", { offer, senderSocketId: socket.id });
@@ -901,6 +1031,7 @@ async function startServer() {
 
     socket.on("disconnect", () => {
       console.log(`User disconnected: ${socket.id}`);
+      const now = Date.now();
       rooms.forEach((room, roomId) => {
         if (room.participants && room.participants.has(socket.id)) {
           const participant = room.participants.get(socket.id);
@@ -912,7 +1043,8 @@ async function startServer() {
             id: Math.random().toString(36).substring(2, 9),
             sender: "System",
             text: `${participant.name} left the lounge.`,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            timestamp: now,
+            time: new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             avatarColor: "#9ca3af"
           };
           room.messages.push(leaveMsg);
