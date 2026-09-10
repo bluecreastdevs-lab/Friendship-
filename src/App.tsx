@@ -37,7 +37,7 @@ export default function App() {
 
   // Movie State (Independent sync channel)
   const [movieState, setMovieState] = useState<MovieState>({
-    mediaUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    mediaUrl: 'https://www.w3schools.com/html/mov_bbb.mp4',
     mediaType: 'video',
     isPlaying: false,
     currentTime: 0,

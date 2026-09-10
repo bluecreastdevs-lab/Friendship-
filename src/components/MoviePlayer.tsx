@@ -218,7 +218,7 @@ export default function MoviePlayer({
         const currentPl = movieState.playlist || [];
         const updatedPl = packet.playlist || currentPl.filter(v => v.url !== packet.deletedMediaUrl);
         const isCurrentDeleted = movieState.mediaUrl === packet.deletedMediaUrl;
-        const nextUrl = isCurrentDeleted ? (packet.mediaUrl || updatedPl[0]?.url || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4') : movieState.mediaUrl;
+        const nextUrl = isCurrentDeleted ? (packet.mediaUrl || updatedPl[0]?.url || 'https://www.w3schools.com/html/mov_bbb.mp4') : movieState.mediaUrl;
         const nextTitle = isCurrentDeleted ? (packet.mediaTitle || updatedPl[0]?.title || 'Big Buck Bunny (Animated Classic)') : movieState.mediaTitle;
 
         if (isCurrentDeleted) {
@@ -395,7 +395,7 @@ export default function MoviePlayer({
         nextTitle = updatedPl[0].title;
         nextUploadedBy = updatedPl[0].uploadedBy;
       } else {
-        nextUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        nextUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
         nextTitle = 'Big Buck Bunny (Animated Classic)';
         nextUploadedBy = 'System';
       }
