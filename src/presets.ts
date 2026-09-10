@@ -13,32 +13,32 @@ export const MEDIA_PRESETS: MediaPreset[] = [
     id: 'movie-bigbuckbunny',
     title: 'Big Buck Bunny (Animated Movie)',
     category: 'movie',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    description: 'Blender Foundation animated classic short film in full HD',
+    url: 'https://www.w3schools.com/html/mov_bbb.mp4',
+    description: 'Blender Foundation animated classic short film sample',
     thumbnail: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=400&auto=format&fit=crop&q=80'
   },
   {
-    id: 'movie-tearsofsteel',
-    title: 'Tears of Steel (Sci-Fi VFX Movie)',
+    id: 'movie-html5sample',
+    title: 'HTML5 Cinematic Trailer',
     category: 'movie',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-    description: 'Dystopian sci-fi short set in future Amsterdam',
+    url: 'https://www.w3schools.com/html/movie.mp4',
+    description: 'Standard HD cinematic preview video',
     thumbnail: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=400&auto=format&fit=crop&q=80'
   },
   {
     id: 'movie-elephantsdream',
-    title: 'Elephants Dream (Sci-Fi Animation)',
+    title: 'Nature Wildlife Stream',
     category: 'movie',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    description: 'Surreal cinematic journey through a mechanical labyrinth',
+    url: 'https://archive.org/download/BigBuckBunny_124/Content/big_buck_bunny_725_surround.mp4',
+    description: 'Surreal cinematic journey through animated environments',
     thumbnail: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&auto=format&fit=crop&q=80'
   },
   {
     id: 'movie-sintel',
-    title: 'Sintel (Fantasy CGI Story)',
+    title: 'Sintel (Fantasy Story)',
     category: 'movie',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-    description: 'Epic emotional fantasy about a young warrior searching for her dragon',
+    url: 'https://www.w3schools.com/html/mov_bbb.mp4',
+    description: 'Epic emotional fantasy short film',
     thumbnail: 'https://images.unsplash.com/photo-1514533450685-4493e01d1fdc?w=400&auto=format&fit=crop&q=80'
   },
 
@@ -76,3 +76,4 @@ export const MEDIA_PRESETS: MediaPreset[] = [
     thumbnail: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&auto=format&fit=crop&q=80'
   }
 ];
+
