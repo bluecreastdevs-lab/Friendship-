@@ -63,6 +63,11 @@ export default function VideoPlayer({
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [uploadProgressMsg, setUploadProgressMsg] = useState<string>('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setVideoError(null);
+  }, [mediaState.mediaUrl]);
 
   // Image viewer state
   const [imageZoom, setImageZoom] = useState<number>(1);
@@ -575,19 +580,52 @@ export default function VideoPlayer({
         ) : (
           // Video / Movie Player Mode
           <div className="relative w-full h-full flex items-center justify-center bg-slate-950">
-            <video
-              ref={mediaRef as React.RefObject<HTMLVideoElement>}
-              src={mediaState.mediaUrl}
-              className="w-full h-full object-contain cursor-pointer"
-              onClick={handlePlayPause}
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleLoadedMetadata}
-              onWaiting={() => setIsBuffering(true)}
-              onPlaying={() => setIsBuffering(false)}
-              onEnded={() => onMediaStateChange({ isPlaying: false, currentTime: duration })}
-              playsInline
-              muted={isMutedLocal}
-            />
+            {videoError ? (
+              <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center p-6 text-center space-y-4 z-20">
+                <div className="w-16 h-16 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                  <Film className="w-8 h-8" />
+                </div>
+                <div className="space-y-1 max-w-md">
+                  <h3 className="text-sm font-bold text-white">Video Stream Restricted (CORS / Storage Policy)</h3>
+                  <p className="text-xs text-slate-400">{videoError}</p>
+                </div>
+                <div className="flex flex-wrap gap-2 justify-center pt-2">
+                  <button
+                    onClick={() => {
+                      setVideoError(null);
+                      handleSelectPreset(MEDIA_PRESETS[0]);
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl shadow-md transition-colors"
+                  >
+                    Switch to Big Buck Bunny
+                  </button>
+                  <button
+                    onClick={() => setShowPresetsModal(true)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-colors"
+                  >
+                    Open Media Library
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <video
+                ref={mediaRef as React.RefObject<HTMLVideoElement>}
+                src={mediaState.mediaUrl}
+                className="w-full h-full object-contain cursor-pointer"
+                onClick={handlePlayPause}
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={handleLoadedMetadata}
+                onWaiting={() => setIsBuffering(true)}
+                onPlaying={() => setIsBuffering(false)}
+                onError={() => {
+                  setVideoError('The browser could not load this video URL due to CORS or storage bucket access restrictions.');
+                  setIsBuffering(false);
+                }}
+                onEnded={() => onMediaStateChange({ isPlaying: false, currentTime: duration })}
+                playsInline
+                muted={isMutedLocal}
+              />
+            )}
 
             {/* Title Overlay in Video */}
             <div className="absolute top-4 left-4 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/70 shadow-lg pointer-events-none">
