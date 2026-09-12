@@ -42,11 +42,11 @@ export const MEDIA_PRESETS: MediaPreset[] = [
     thumbnail: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&auto=format&fit=crop&q=80'
   },
   {
-    id: 'movie-local-sample',
-    title: 'Lounge Demo Video (Local Storage)',
+    id: 'movie-blazes',
+    title: 'For Bigger Blazes (Cinema Sample)',
     category: 'movie',
-    url: '/uploads/1788967697862-318783671-test_video.mp4',
-    description: 'High-speed local video streamed directly from the SyncSpace server storage',
+    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    description: 'High-definition widescreen sample movie suitable for synchronized streaming',
     thumbnail: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=400&auto=format&fit=crop&q=80'
   },
 

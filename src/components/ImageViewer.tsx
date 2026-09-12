@@ -208,7 +208,54 @@ export default function ImageViewer({
     handleSelectImage(gallery[nextIdx]);
   };
 
-  // Handle local file upload (Client-side object URL for Netlify / static hosting compatibility)
+  // Convert file to optimized Data URL so all participants across devices can sync and render
+  const processImageToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        if (!result) return reject(new Error('Failed to read image data'));
+
+        // If image is small (< 1MB), use as-is
+        if (file.size <= 1024 * 1024) {
+          return resolve(result);
+        }
+
+        // If image is large (> 1MB), scale it on an off-screen canvas to keep WebSocket fast
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1920;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(result);
+
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.88));
+        };
+        img.onerror = () => resolve(result);
+        img.src = result;
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Handle image file upload with dual backend-upload + universal synced Data URL support
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -222,13 +269,37 @@ export default function ImageViewer({
     setUploadError(null);
 
     try {
-      const fileUrl = URL.createObjectURL(file);
+      let finalImageUrl = '';
+
+      // 1. Try uploading to backend server first if available
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(getApiUrl('/api/upload'), {
+          method: 'POST',
+          body: formData
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.url) {
+            finalImageUrl = data.url;
+          }
+        }
+      } catch (uploadErr) {
+        console.warn('Backend server upload not reachable, using universal synced Data URL fallback:', uploadErr);
+      }
+
+      // 2. Fallback: Process into universal high-resolution Data URL for instant peer sync
+      if (!finalImageUrl) {
+        finalImageUrl = await processImageToDataUrl(file);
+      }
+
       const newImageItem: ImageItem = {
         id: `img-${Date.now()}`,
-        url: fileUrl,
+        url: finalImageUrl,
         title: file.name,
         uploadedBy: currentUser,
-        thumbnail: fileUrl,
+        thumbnail: finalImageUrl,
         timestamp: Date.now()
       };
 
@@ -465,7 +536,7 @@ export default function ImageViewer({
         {imageState.activeImageUrl && (
           <div
             className="absolute inset-0 bg-cover bg-center blur-3xl opacity-20 transform scale-110 pointer-events-none"
-            style={{ backgroundImage: `url(${imageState.activeImageUrl})` }}
+            style={{ backgroundImage: `url(${getMediaUrl(imageState.activeImageUrl)})` }}
           />
         )}
 
@@ -495,6 +566,19 @@ export default function ImageViewer({
             <p className="text-xs text-slate-500 max-w-sm">
               Upload a photo, paste an image URL, or choose from our 4K wallpapers above. All participants will view and zoom together in real time!
             </p>
+            {imageLoadError && (
+              <button
+                onClick={() => {
+                  setImageLoadError(false);
+                  const samplePreset = MEDIA_PRESETS.find(p => p.category === 'image') || MEDIA_PRESETS[0];
+                  handleSelectPreset(samplePreset);
+                }}
+                className="mt-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition-all shadow-md flex items-center space-x-2"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Switch to 4K Wallpaper Sample</span>
+              </button>
+            )}
           </div>
         )}
 

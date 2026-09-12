@@ -123,3 +123,10 @@ export interface MediaActionPayload {
   imageZoom?: number;
 }
 
+export interface TabActionPayload {
+  roomId: string;
+  tab: 'movie' | 'image';
+  senderId?: string;
+  senderName?: string;
+}
+

@@ -63,7 +63,15 @@ export default function App() {
   const [showShareModal, setShowShareModal] = useState(false);
 
   // Tab state: 'movie' vs 'image'
-  const [mediaTab, setMediaTab] = useState<'movie' | 'image'>('movie');
+  const [mediaTab, setMediaTab] = useState<'movie' | 'image'>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlTab = params.get('tab');
+      if (urlTab === 'image' || urlTab === 'movie') return urlTab;
+    } catch (_) {}
+    return 'movie';
+  });
+  const [tabNotification, setTabNotification] = useState<{ tab: 'movie' | 'image'; senderName: string; timestamp: number } | null>(null);
 
   // Socket & Connection status with Exponential Backoff
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -271,6 +279,9 @@ export default function App() {
 
     // Authoritative room-state synchronization
     const handleRoomState = (state: any) => {
+      if (state.activeTab && (state.activeTab === 'movie' || state.activeTab === 'image')) {
+        setMediaTab(state.activeTab);
+      }
       if (state.movieState) {
         setMovieState((prev) => ({
           ...prev,
@@ -302,6 +313,9 @@ export default function App() {
 
     // Dedicated movie sync packet
     newSocket.on('movie_action', (packet: MovieActionPayload) => {
+      if (packet.type === 'change_movie' || packet.type === 'play') {
+        setMediaTab('movie');
+      }
       setMovieState((prev) => ({
         ...prev,
         mediaUrl: packet.mediaUrl || prev.mediaUrl,
@@ -317,6 +331,9 @@ export default function App() {
 
     // Dedicated image sync packet
     newSocket.on('image_action', (packet: ImageActionPayload) => {
+      if (packet.type === 'select_image' || packet.type === 'add_image') {
+        setMediaTab('image');
+      }
       setImageState((prev) => ({
         ...prev,
         activeImageUrl: packet.activeImageUrl || prev.activeImageUrl,
@@ -325,6 +342,21 @@ export default function App() {
         imageZoom: packet.imageZoom ?? prev.imageZoom,
         gallery: packet.gallery || prev.gallery
       }));
+    });
+
+    // Synchronized page tab changes (Movie Page vs Image Page)
+    newSocket.on('tab_changed', (packet: { tab: 'movie' | 'image'; senderName?: string; senderId?: string }) => {
+      if (packet && (packet.tab === 'movie' || packet.tab === 'image')) {
+        setMediaTab(packet.tab);
+        setTabNotification({
+          tab: packet.tab,
+          senderName: packet.senderName || 'A lounge member',
+          timestamp: Date.now()
+        });
+        setTimeout(() => {
+          setTabNotification((curr) => (curr && Date.now() - curr.timestamp >= 3800 ? null : curr));
+        }, 4000);
+      }
     });
 
     newSocket.on('participants-update', (updatedParticipants) => {
@@ -419,6 +451,16 @@ export default function App() {
     setCopiedRoom(true);
     setShowShareModal(true);
     setTimeout(() => setCopiedRoom(false), 2500);
+  };
+
+  // Broadcast page switch to all participants in the room
+  const handleSwitchTab = (newTab: 'movie' | 'image') => {
+    setMediaTab(newTab);
+    socket?.emit('change_tab', {
+      roomId,
+      tab: newTab,
+      senderName: userName
+    });
   };
 
   // Open the image tab in a brand new browser tab
@@ -540,6 +582,25 @@ export default function App() {
     <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-slate-950 font-sans p-2 lg:p-4 gap-3.5">
       <ThreeBackground />
 
+      {/* Floating Synced Tab Switch Notification Toast */}
+      {tabNotification && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top duration-300 pointer-events-none">
+          <div className="px-4 py-2 rounded-2xl bg-slate-900/95 backdrop-blur-md border border-indigo-500/40 text-white text-xs font-medium shadow-2xl flex items-center space-x-2">
+            {tabNotification.tab === 'movie' ? (
+              <Film className="w-4 h-4 text-indigo-400 shrink-0" />
+            ) : (
+              <ImageIcon className="w-4 h-4 text-pink-400 shrink-0" />
+            )}
+            <span>
+              <strong className="text-indigo-300 font-semibold">{tabNotification.senderName}</strong> switched room to{' '}
+              <strong className={tabNotification.tab === 'movie' ? 'text-indigo-400' : 'text-pink-400'}>
+                {tabNotification.tab === 'movie' ? 'Movie Page' : 'Image Page'}
+              </strong>
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Netlify / Static Host Notice */}
       {showNetlifyNotice && (
         <div className="flex items-center justify-between px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 shrink-0 z-30 shadow-md">
@@ -575,13 +636,13 @@ export default function App() {
           {/* Primary Media Switcher Tabs: Movie Page vs Image Page */}
           <div className="flex items-center p-0.5 sm:p-1 bg-slate-950/80 rounded-xl border border-slate-800 shadow-inner shrink-0">
             <button
-              onClick={() => setMediaTab('movie')}
+              onClick={() => handleSwitchTab('movie')}
               className={`flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 mediaTab === 'movie'
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                   : 'text-slate-400 hover:text-white'
               }`}
-              title="Switch to Synced Movie Lounge"
+              title="Switch room to Synced Movie Lounge"
             >
               <Film className="w-3.5 h-3.5 shrink-0" />
               <span>Movie</span>
@@ -589,13 +650,13 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => setMediaTab('image')}
+              onClick={() => handleSwitchTab('image')}
               className={`flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 mediaTab === 'image'
                   ? 'bg-pink-600 text-white shadow-md shadow-pink-600/30'
                   : 'text-slate-400 hover:text-white'
               }`}
-              title="Switch to Synced Image Gallery"
+              title="Switch room to Synced Image Gallery"
             >
               <ImageIcon className="w-3.5 h-3.5 shrink-0" />
               <span>Image</span>

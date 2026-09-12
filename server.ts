@@ -88,6 +88,7 @@ async function startServer() {
       const serializable: Record<string, any> = {};
       rooms.forEach((room, roomId) => {
         serializable[roomId] = {
+          activeTab: room.activeTab || 'movie',
           movieState: room.movieState,
           imageState: room.imageState,
           roomState: room.roomState,
@@ -355,9 +356,9 @@ async function startServer() {
               timestamp: initialTimestamp
             },
             {
-              id: 'vid-local-demo',
-              url: '/uploads/1788967697862-318783671-test_video.mp4',
-              title: 'Lounge Demo Video (Local Storage)',
+              id: 'vid-blazes',
+              url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+              title: 'For Bigger Blazes (Cinema Sample)',
               uploadedBy: 'System',
               thumbnail: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=400&auto=format&fit=crop&q=80',
               timestamp: initialTimestamp
@@ -408,6 +409,7 @@ async function startServer() {
         };
 
         rooms.set(roomId, {
+          activeTab: 'movie',
           movieState: initialMovieState,
           imageState: initialImageState,
           roomState: initialMovieState,
@@ -463,6 +465,7 @@ async function startServer() {
       // Send full synchronized room state immediately upon join
       const statePayload = {
         roomId,
+        activeTab: room.activeTab || 'movie',
         movieState: syncedMovie,
         imageState: room.imageState,
         roomState: syncedRoomState,
@@ -598,6 +601,9 @@ async function startServer() {
       // Mirror to legacy roomState / mediaState
       room.roomState = { ...room.movieState };
       room.mediaState = { ...room.movieState, lastUpdated: serverTimestamp };
+      if (type === 'change_movie' || type === 'play') {
+        room.activeTab = 'movie';
+      }
 
       saveRoomsDb();
 
@@ -712,6 +718,9 @@ async function startServer() {
       }
 
       room.imageState.serverTimestamp = serverTimestamp;
+      if (type === 'select_image' || type === 'add_image') {
+        room.activeTab = 'image';
+      }
       saveRoomsDb();
 
       const broadcastPayload = {
@@ -731,6 +740,25 @@ async function startServer() {
       if (type === 'delete_image' || type === 'add_image') {
         socket.emit("image_action", broadcastPayload);
       }
+    });
+
+    // Dedicated synchronized tab switcher (Movie Page vs Image Page)
+    socket.on("change_tab", (payload: { roomId: string; tab: 'movie' | 'image'; senderName?: string }) => {
+      const { roomId, tab, senderName } = payload;
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      room.activeTab = tab;
+      saveRoomsDb();
+
+      const broadcastPayload = {
+        roomId,
+        tab,
+        senderId: socket.id,
+        senderName: senderName || 'A participant'
+      };
+
+      socket.to(roomId).emit("tab_changed", broadcastPayload);
     });
 
     // Standardized media_action handler (play, pause, seek, change_media, heartbeat, image_view)
@@ -887,6 +915,7 @@ async function startServer() {
 
         const fullRoomState = {
           roomId,
+          activeTab: room.activeTab || 'movie',
           movieState: syncedMovie,
           imageState: room.imageState,
           roomState: syncedState,
