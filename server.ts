@@ -136,7 +136,15 @@ async function startServer() {
         "0";
       const uploadId = String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
       const chunkIndex = parseInt(String(rawIndex), 10) || 0;
-      cb(null, `${uploadId}_part_${chunkIndex}`);
+      const targetFilename = `${uploadId}_part_${chunkIndex}`;
+      const targetPath = path.join(chunksDir, targetFilename);
+      // If a previous interrupted attempt left a partial file, clear it before writing fresh data
+      try {
+        if (fs.existsSync(targetPath)) {
+          fs.unlinkSync(targetPath);
+        }
+      } catch (_) {}
+      cb(null, targetFilename);
     }
   });
 
@@ -1272,7 +1280,10 @@ async function startServer() {
     if (fs.existsSync(partPath)) {
       const size = fs.statSync(partPath).size;
       if (expectedSize > 0 && Math.abs(size - expectedSize) > 0) {
-        // Size mismatch
+        // Size mismatch from interrupted connection - remove partial file so retry writes cleanly
+        try {
+          fs.unlinkSync(partPath);
+        } catch (_) {}
         return res.json({ exists: false, size });
       }
       return res.json({ exists: true, size });

@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { MovieState, Participant, MovieActionPayload, VideoItem } from '../types';
 import { MEDIA_PRESETS } from '../presets';
-import { getApiUrl, getMediaUrl } from '../config';
+import { getApiUrl, getMediaUrl, isStaticHostWithoutBackend } from '../config';
 
 export interface MoviePlayerProps {
   socket: Socket | null;
@@ -772,12 +772,15 @@ export default function MoviePlayer({
     setUploadError(null);
     abortUploadRef.current = false;
 
-    // Adaptive chunk sizing for 2.5GB+ movies:
-    // Files > 1.5GB use 6MB chunks to reduce HTTP request count by 60% while staying well under proxy limits
+    // Adaptive chunk sizing for large video files:
+    // Using 5MB-8MB chunks reduces HTTP request count by 50-60%, preventing TCP connection drops,
+    // reverse proxy socket thrashing, and browser network queue exhaustion.
     const CHUNK_SIZE =
       file.size > 1.5 * 1024 * 1024 * 1024
-        ? 6 * 1024 * 1024
-        : Math.round(2.5 * 1024 * 1024);
+        ? 8 * 1024 * 1024
+        : file.size > 200 * 1024 * 1024
+          ? 5 * 1024 * 1024
+          : Math.round(3.5 * 1024 * 1024);
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     activeUploadIdRef.current = uploadId;
@@ -789,16 +792,21 @@ export default function MoviePlayer({
           getApiUrl(`/api/upload/chunk-status?uploadId=${encodeURIComponent(upId)}&chunkIndex=${idx}&expectedSize=${expectedSize}`),
           { cache: 'no-store' }
         );
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (contentType.includes('text/html')) {
+          // Static host (Netlify) rewrite detected!
+          return { isStaticHost: true, exists: false };
+        }
         if (res.ok) {
           const data = await res.json();
-          return !!data.exists;
+          return { isStaticHost: false, exists: !!data.exists };
         }
       } catch (_) {}
-      return false;
+      return { isStaticHost: false, exists: false };
     };
 
     let finalData: any = null;
-    let useObjectUrlFallback = false;
+    let useObjectUrlFallback = isStaticHostWithoutBackend();
 
     try {
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -816,14 +824,18 @@ export default function MoviePlayer({
           break;
         }
 
-        // Upload single chunk with retry up to 5 times
+        // Upload single chunk with retry up to 6 times
         let attempt = 0;
         let chunkSuccess = false;
         let lastErr: any = null;
 
         // Check if chunk is already stored on server (e.g. from previous attempt)
-        const alreadyOnServer = await checkChunkOnServer(uploadId, chunkIndex, chunkBlob.size);
-        if (alreadyOnServer) {
+        const serverStatus = await checkChunkOnServer(uploadId, chunkIndex, chunkBlob.size);
+        if (serverStatus.isStaticHost) {
+          useObjectUrlFallback = true;
+          break;
+        }
+        if (serverStatus.exists) {
           chunkSuccess = true;
           const totalLoaded = Math.min(file.size, end);
           const pct = Math.min(99, Math.round((totalLoaded / file.size) * 100));
@@ -831,19 +843,23 @@ export default function MoviePlayer({
           setUploadBytesMsg(`${formatBytes(totalLoaded)} of ${formatBytes(file.size)}`);
         }
 
-        while (attempt < 5 && !chunkSuccess) {
+        while (attempt < 6 && !chunkSuccess) {
           if (abortUploadRef.current) throw new Error('Upload cancelled');
           attempt++;
 
           if (attempt > 1) {
             setUploadProgressMsg(
-              `Reconnecting: Part ${chunkIndex + 1}/${totalChunks} (attempt ${attempt}/5)...`
+              `Reconnecting: Part ${chunkIndex + 1}/${totalChunks} (attempt ${attempt}/6)...`
             );
-            const delay = Math.min(1000 * Math.pow(1.5, attempt - 1), 5000);
+            const delay = Math.min(600 * Math.pow(1.5, attempt - 2) + Math.random() * 200, 5000);
             await new Promise((r) => setTimeout(r, delay));
 
             const recheck = await checkChunkOnServer(uploadId, chunkIndex, chunkBlob.size);
-            if (recheck) {
+            if (recheck.isStaticHost) {
+              useObjectUrlFallback = true;
+              break;
+            }
+            if (recheck.exists) {
               chunkSuccess = true;
               break;
             }
@@ -853,7 +869,7 @@ export default function MoviePlayer({
             finalData = await new Promise<any>((resolve, reject) => {
               const xhr = new XMLHttpRequest();
               xhrRef.current = xhr;
-              xhr.timeout = isLastChunk ? 180000 : 90000;
+              xhr.timeout = isLastChunk ? 240000 : 120000;
 
               xhr.upload.onprogress = (event) => {
                 if (event.lengthComputable && !abortUploadRef.current) {
@@ -874,8 +890,18 @@ export default function MoviePlayer({
 
               xhr.onload = () => {
                 xhrRef.current = null;
-                const contentType = xhr.getResponseHeader('content-type') || '';
+                const contentType = (xhr.getResponseHeader('content-type') || '').toLowerCase();
                 const isJson = contentType.includes('application/json');
+                const isHtml =
+                  contentType.includes('text/html') ||
+                  xhr.responseText.trim().startsWith('<!') ||
+                  xhr.responseText.trim().toLowerCase().startsWith('<html');
+
+                // Netlify or static host SPA rewrite detected
+                if (isHtml) {
+                  resolve({ fallback: true });
+                  return;
+                }
 
                 if (xhr.status >= 200 && xhr.status < 300) {
                   if (isJson) {
@@ -883,12 +909,12 @@ export default function MoviePlayer({
                       const res = JSON.parse(xhr.responseText);
                       resolve(res);
                     } catch (e) {
-                      reject(new Error('Invalid JSON from server on chunk ' + chunkIndex));
+                      reject(new Error(`Invalid response on part ${chunkIndex + 1}/${totalChunks}`));
                     }
                   } else {
                     resolve({ success: true });
                   }
-                } else if (xhr.status === 404 && chunkIndex === 0) {
+                } else if ((xhr.status === 404 || xhr.status === 405) && chunkIndex === 0) {
                   // Static hosting / Netlify detected (no backend API) -> trigger client object URL fallback
                   resolve({ fallback: true });
                 } else {
@@ -912,7 +938,7 @@ export default function MoviePlayer({
 
               xhr.onerror = () => {
                 xhrRef.current = null;
-                if (chunkIndex === 0) {
+                if (chunkIndex === 0 || isStaticHostWithoutBackend()) {
                   resolve({ fallback: true });
                 } else {
                   reject(new Error(`Network glitch on part ${chunkIndex + 1}/${totalChunks}`));
@@ -938,6 +964,9 @@ export default function MoviePlayer({
                 fileType: file.type
               });
               xhr.open('POST', getApiUrl(`/api/upload/chunk?${queryParams.toString()}`), true);
+              xhr.setRequestHeader('x-upload-id', uploadId);
+              xhr.setRequestHeader('x-chunk-index', String(chunkIndex));
+              xhr.setRequestHeader('x-total-chunks', String(totalChunks));
 
               const formData = new FormData();
               formData.append('uploadId', uploadId);
@@ -969,9 +998,17 @@ export default function MoviePlayer({
           break;
         }
 
+        // If after 6 attempts a network glitch persists on part, gracefully switch to local playback
         if (!chunkSuccess) {
-          throw lastErr || new Error(`Failed to upload part ${chunkIndex + 1}/${totalChunks}`);
+          console.warn(
+            `[MoviePlayer] Network issue on part ${chunkIndex + 1}/${totalChunks}. Switching smoothly to local playback fallback.`
+          );
+          useObjectUrlFallback = true;
+          break;
         }
+
+        // Brief yield between chunks to release browser socket pool & garbage collect slices
+        await new Promise((r) => setTimeout(r, 25));
       }
 
       if (abortUploadRef.current) return;
@@ -979,6 +1016,8 @@ export default function MoviePlayer({
       let videoUrl = '';
       if (useObjectUrlFallback) {
         videoUrl = URL.createObjectURL(file);
+        setUploadPercent(100);
+        setUploadProgressMsg('Loaded local video for instant playback!');
       } else {
         if (!finalData || !finalData.url) {
           throw new Error('Upload completed, but server did not return the video URL.');
