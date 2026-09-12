@@ -105,13 +105,50 @@ export default function MoviePlayer({
 
   // Synchronize when mediaUrl or initial room state updates
   useEffect(() => {
+    if (isRemoteAction.current) return;
+
     if (movieState.mediaUrl !== lastMediaUrlRef.current) {
       lastMediaUrlRef.current = movieState.mediaUrl;
       pendingSeekTimeRef.current = movieState.currentTime || 0;
       setDisplayTime(movieState.currentTime || 0);
       setVideoError(null);
+      return;
     }
-  }, [movieState.mediaUrl, movieState.currentTime]);
+
+    const el = videoRef.current;
+    if (!el || isSeeking) return;
+
+    // Authoritative room-state synchronization for the active video
+    const elapsed = movieState.isPlaying
+      ? Math.min(2.0, Math.max(0, (Date.now() - (movieState.serverTimestamp || Date.now())) / 1000))
+      : 0;
+    const targetTime = (movieState.currentTime || 0) + elapsed;
+
+    if (el.readyState >= 1) {
+      const diff = Math.abs(el.currentTime - targetTime);
+      if (diff > 1.2) {
+        try {
+          el.currentTime = targetTime;
+          setDisplayTime(targetTime);
+        } catch (_) {}
+      }
+
+      if (movieState.isPlaying && el.paused) {
+        el.play().catch((err: any) => {
+          if (err?.name === 'NotAllowedError') {
+            el.muted = true;
+            setIsMutedLocal(true);
+            setAutoplayBlocked(true);
+            el.play().catch(() => {});
+          }
+        });
+      } else if (!movieState.isPlaying && !el.paused) {
+        el.pause();
+      }
+    } else {
+      pendingSeekTimeRef.current = targetTime;
+    }
+  }, [movieState.mediaUrl, movieState.currentTime, movieState.isPlaying, movieState.serverTimestamp, isSeeking]);
 
   // Host detection
   const isHost = participants.length > 0 && participants[0].socketId === socket?.id;
@@ -218,8 +255,8 @@ export default function MoviePlayer({
         const currentPl = movieState.playlist || [];
         const updatedPl = packet.playlist || currentPl.filter(v => v.url !== packet.deletedMediaUrl);
         const isCurrentDeleted = movieState.mediaUrl === packet.deletedMediaUrl;
-        const nextUrl = isCurrentDeleted ? (packet.mediaUrl || updatedPl[0]?.url || 'https://www.w3schools.com/html/mov_bbb.mp4') : movieState.mediaUrl;
-        const nextTitle = isCurrentDeleted ? (packet.mediaTitle || updatedPl[0]?.title || 'Big Buck Bunny (Animated Classic)') : movieState.mediaTitle;
+        const nextUrl = isCurrentDeleted ? (packet.mediaUrl || updatedPl[0]?.url || 'https://media.w3.org/2010/05/bunny/trailer.mp4') : movieState.mediaUrl;
+        const nextTitle = isCurrentDeleted ? (packet.mediaTitle || updatedPl[0]?.title || 'Big Buck Bunny (Trailer)') : movieState.mediaTitle;
 
         if (isCurrentDeleted) {
           pendingSeekTimeRef.current = 0;
@@ -239,6 +276,28 @@ export default function MoviePlayer({
         return;
       }
 
+      // If the incoming packet refers to a different mediaUrl, switch to it immediately
+      if (packet.mediaUrl && packet.mediaUrl !== lastMediaUrlRef.current) {
+        lastMediaUrlRef.current = packet.mediaUrl;
+        pendingSeekTimeRef.current = packet.currentTime || 0;
+        setDisplayTime(packet.currentTime || 0);
+        setVideoError(null);
+        onMovieStateChange({
+          mediaUrl: packet.mediaUrl,
+          currentTime: packet.currentTime || 0,
+          isPlaying: packet.isPlaying ?? false,
+          mediaTitle: packet.mediaTitle || movieState.mediaTitle,
+          uploadedBy: packet.uploadedBy || movieState.uploadedBy,
+          duration: packet.duration,
+          playlist: packet.playlist || movieState.playlist,
+          serverTimestamp: packet.serverTimestamp
+        });
+        setTimeout(() => {
+          isRemoteAction.current = false;
+        }, 300);
+        return;
+      }
+
       const el = videoRef.current;
       if (!el) {
         isRemoteAction.current = false;
@@ -246,30 +305,34 @@ export default function MoviePlayer({
       }
 
       const transitLatency = packet.isPlaying
-        ? Math.max(0, (Date.now() - (packet.serverTimestamp || Date.now())) / 1000)
+        ? Math.min(0.5, Math.max(0, (Date.now() - (packet.serverTimestamp || Date.now())) / 1000))
         : 0;
       const targetTime =
-        packet.isPlaying && transitLatency < 6
+        packet.isPlaying
           ? packet.currentTime + transitLatency
           : packet.currentTime;
 
       if (packet.type === 'play') {
-        const diff = Math.abs(el.currentTime - targetTime);
-        if (diff > 1.2) {
-          try {
-            el.currentTime = targetTime;
-            setDisplayTime(targetTime);
-          } catch (_) {}
-        }
-        el.playbackRate = 1.0;
-        el.play().catch((err: any) => {
-          if (err?.name === 'NotAllowedError') {
-            el.muted = true;
-            setIsMutedLocal(true);
-            setAutoplayBlocked(true);
-            el.play().catch(() => {});
+        if (el.readyState >= 1) {
+          const diff = Math.abs(el.currentTime - targetTime);
+          if (diff > 1.2) {
+            try {
+              el.currentTime = targetTime;
+              setDisplayTime(targetTime);
+            } catch (_) {}
           }
-        });
+          el.playbackRate = 1.0;
+          el.play().catch((err: any) => {
+            if (err?.name === 'NotAllowedError') {
+              el.muted = true;
+              setIsMutedLocal(true);
+              setAutoplayBlocked(true);
+              el.play().catch(() => {});
+            }
+          });
+        } else {
+          pendingSeekTimeRef.current = targetTime;
+        }
         onMovieStateChange({ isPlaying: true, currentTime: targetTime });
       } else if (packet.type === 'pause') {
         el.pause();
@@ -395,8 +458,8 @@ export default function MoviePlayer({
         nextTitle = updatedPl[0].title;
         nextUploadedBy = updatedPl[0].uploadedBy;
       } else {
-        nextUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
-        nextTitle = 'Big Buck Bunny (Animated Classic)';
+        nextUrl = 'https://media.w3.org/2010/05/bunny/trailer.mp4';
+        nextTitle = 'Big Buck Bunny (Trailer)';
         nextUploadedBy = 'System';
       }
       setDisplayTime(0);
@@ -530,12 +593,24 @@ export default function MoviePlayer({
     setIsBuffering(false);
     setVideoError(null);
     const el = videoRef.current;
-    if (el && pendingSeekTimeRef.current !== null) {
-      try {
-        el.currentTime = pendingSeekTimeRef.current;
-        setDisplayTime(pendingSeekTimeRef.current);
-      } catch (_) {}
-      pendingSeekTimeRef.current = null;
+    if (el) {
+      if (pendingSeekTimeRef.current !== null) {
+        try {
+          el.currentTime = pendingSeekTimeRef.current;
+          setDisplayTime(pendingSeekTimeRef.current);
+        } catch (_) {}
+        pendingSeekTimeRef.current = null;
+      }
+      if (movieStateRef.current.isPlaying && el.paused) {
+        el.play().catch((err: any) => {
+          if (err?.name === 'NotAllowedError') {
+            el.muted = true;
+            setIsMutedLocal(true);
+            setAutoplayBlocked(true);
+            el.play().catch(() => {});
+          }
+        });
+      }
     }
   };
 
@@ -615,8 +690,8 @@ export default function MoviePlayer({
   // Switch to compatible sample video
   const handleSwitchToSample = () => {
     setVideoError(null);
-    const sampleUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
-    const sampleTitle = 'Big Buck Bunny (Animated Classic)';
+    const sampleUrl = 'https://media.w3.org/2010/05/bunny/trailer.mp4';
+    const sampleTitle = 'Big Buck Bunny (Trailer)';
     onMovieStateChange({
       mediaUrl: sampleUrl,
       mediaTitle: sampleTitle,

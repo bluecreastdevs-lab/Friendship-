@@ -84,12 +84,12 @@ export default function App() {
 
   // Movie State (Independent sync channel)
   const [movieState, setMovieState] = useState<MovieState>({
-    mediaUrl: 'https://www.w3schools.com/html/mov_bbb.mp4',
+    mediaUrl: 'https://media.w3.org/2010/05/bunny/trailer.mp4',
     mediaType: 'video',
     isPlaying: false,
     currentTime: 0,
     serverTimestamp: Date.now(),
-    mediaTitle: 'Big Buck Bunny (Animated Classic)',
+    mediaTitle: 'Big Buck Bunny (Trailer)',
     uploadedBy: 'System'
   });
 
@@ -268,7 +268,7 @@ export default function App() {
     });
 
     // Authoritative room-state synchronization
-    newSocket.on('room-state', (state) => {
+    const handleRoomState = (state: any) => {
       if (state.movieState) {
         setMovieState((prev) => ({
           ...prev,
@@ -293,7 +293,10 @@ export default function App() {
         }));
         setMessages(normalized);
       }
-    });
+    };
+
+    newSocket.on('room-state', handleRoomState);
+    newSocket.on('room_state', handleRoomState);
 
     // Dedicated movie sync packet
     newSocket.on('movie_action', (packet: MovieActionPayload) => {

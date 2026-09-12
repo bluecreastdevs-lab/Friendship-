@@ -11,35 +11,43 @@ export const MEDIA_PRESETS: MediaPreset[] = [
   // Movies & Short Films
   {
     id: 'movie-bigbuckbunny',
-    title: 'Big Buck Bunny (Animated Movie)',
+    title: 'Big Buck Bunny (Trailer)',
     category: 'movie',
-    url: 'https://www.w3schools.com/html/mov_bbb.mp4',
+    url: 'https://media.w3.org/2010/05/bunny/trailer.mp4',
     description: 'Blender Foundation animated classic short film sample',
     thumbnail: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=400&auto=format&fit=crop&q=80'
   },
   {
-    id: 'movie-html5sample',
-    title: 'HTML5 Cinematic Trailer',
+    id: 'movie-sintel',
+    title: 'Sintel (Fantasy Trailer HD)',
     category: 'movie',
-    url: 'https://www.w3schools.com/html/movie.mp4',
-    description: 'Standard HD cinematic preview video',
+    url: 'https://media.w3.org/2010/05/sintel/trailer_hd.mp4',
+    description: 'Epic emotional fantasy short film from the Blender open-movie project',
+    thumbnail: 'https://images.unsplash.com/photo-1514533450685-4493e01d1fdc?w=400&auto=format&fit=crop&q=80'
+  },
+  {
+    id: 'movie-bluemoon',
+    title: 'View From A Blue Moon (Action HD)',
+    category: 'movie',
+    url: 'https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4',
+    description: 'Breathtaking action cinematic movie trailer in high definition',
     thumbnail: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=400&auto=format&fit=crop&q=80'
   },
   {
-    id: 'movie-elephantsdream',
-    title: 'Nature Wildlife Stream',
+    id: 'movie-water',
+    title: 'Nature & Water Stream',
     category: 'movie',
-    url: 'https://archive.org/download/BigBuckBunny_124/Content/big_buck_bunny_725_surround.mp4',
-    description: 'Surreal cinematic journey through animated environments',
+    url: 'https://media.w3.org/2010/05/video/movie_300.mp4',
+    description: 'Cinematic preview of ocean waves and water flow',
     thumbnail: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&auto=format&fit=crop&q=80'
   },
   {
-    id: 'movie-sintel',
-    title: 'Sintel (Fantasy Story)',
+    id: 'movie-local-sample',
+    title: 'Lounge Demo Video (Local Storage)',
     category: 'movie',
-    url: 'https://www.w3schools.com/html/mov_bbb.mp4',
-    description: 'Epic emotional fantasy short film',
-    thumbnail: 'https://images.unsplash.com/photo-1514533450685-4493e01d1fdc?w=400&auto=format&fit=crop&q=80'
+    url: '/uploads/1788967697862-318783671-test_video.mp4',
+    description: 'High-speed local video streamed directly from the SyncSpace server storage',
+    thumbnail: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=400&auto=format&fit=crop&q=80'
   },
 
   // Photos & High-Res Wallpapers
@@ -76,4 +84,3 @@ export const MEDIA_PRESETS: MediaPreset[] = [
     thumbnail: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&auto=format&fit=crop&q=80'
   }
 ];
-

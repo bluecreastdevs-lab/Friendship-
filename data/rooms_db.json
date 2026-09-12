@@ -1,85 +1,102 @@
 {
   "lounge-101": {
     "movieState": {
-      "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      "mediaUrl": "https://media.w3.org/2010/05/bunny/trailer.mp4",
       "mediaType": "video",
       "isPlaying": false,
       "currentTime": 0,
       "serverTimestamp": 1788962813356,
-      "mediaTitle": "Big Buck Bunny (Animated Movie)",
+      "mediaTitle": "Big Buck Bunny (Trailer)",
       "uploadedBy": "System",
-      "playlist": []
+      "playlist": [
+        {
+          "id": "vid-bunny",
+          "url": "https://media.w3.org/2010/05/bunny/trailer.mp4",
+          "title": "Big Buck Bunny (Trailer)",
+          "uploadedBy": "System",
+          "thumbnail": "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&auto=format&fit=crop&q=80",
+          "timestamp": 1788962813356
+        },
+        {
+          "id": "vid-sintel",
+          "url": "https://media.w3.org/2010/05/sintel/trailer_hd.mp4",
+          "title": "Sintel (Fantasy Trailer HD)",
+          "uploadedBy": "System",
+          "thumbnail": "https://images.unsplash.com/photo-1514533450685-4493e01d1fdc?w=400&auto=format&fit=crop&q=80",
+          "timestamp": 1788962813356
+        },
+        {
+          "id": "vid-bluemoon",
+          "url": "https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4",
+          "title": "View From A Blue Moon (Action HD)",
+          "uploadedBy": "System",
+          "thumbnail": "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=400&auto=format&fit=crop&q=80",
+          "timestamp": 1788962813356
+        },
+        {
+          "id": "vid-local-test",
+          "url": "/uploads/1788967697862-318783671-test_video.mp4",
+          "title": "Lounge Demo Video (Local Storage)",
+          "uploadedBy": "System",
+          "thumbnail": "https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=400&auto=format&fit=crop&q=80",
+          "timestamp": 1788962813356
+        }
+      ]
     },
     "imageState": {
-      "activeImageUrl": "/uploads/1788962849048-4711364-31c4ef641612efb366ea62eefed353f0.jpg",
-      "activeImageTitle": "31c4ef641612efb366ea62eefed353f0.jpg",
-      "uploadedBy": "gopi",
+      "activeImageUrl": "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1600&auto=format&fit=crop&q=80",
+      "activeImageTitle": "Deep Cosmic Nebula (Space 4K)",
+      "uploadedBy": "System",
       "imageZoom": 1,
       "gallery": [
         {
-          "id": "img-1788962849104",
-          "url": "/uploads/1788962849048-4711364-31c4ef641612efb366ea62eefed353f0.jpg",
-          "title": "31c4ef641612efb366ea62eefed353f0.jpg",
-          "uploadedBy": "gopi",
-          "thumbnail": "/uploads/1788962849048-4711364-31c4ef641612efb366ea62eefed353f0.jpg",
+          "id": "img-nebula",
+          "url": "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1600&auto=format&fit=crop&q=80",
+          "title": "Deep Cosmic Nebula (Space 4K)",
+          "uploadedBy": "System",
+          "thumbnail": "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&auto=format&fit=crop&q=80",
+          "timestamp": 1788962849140
+        },
+        {
+          "id": "img-cyberpunk",
+          "url": "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=1600&auto=format&fit=crop&q=80",
+          "title": "Cyberpunk Metropolis Night",
+          "uploadedBy": "System",
+          "thumbnail": "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=400&auto=format&fit=crop&q=80",
           "timestamp": 1788962849140
         }
       ],
       "serverTimestamp": 1788962849140
     },
     "roomState": {
-      "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      "mediaUrl": "https://media.w3.org/2010/05/bunny/trailer.mp4",
       "mediaType": "video",
       "isPlaying": false,
       "currentTime": 0,
       "serverTimestamp": 1788962813356,
-      "mediaTitle": "Big Buck Bunny (Animated Movie)",
+      "mediaTitle": "Big Buck Bunny (Trailer)",
       "uploadedBy": "System",
       "playlist": []
     },
     "mediaState": {
-      "mediaUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      "mediaUrl": "https://media.w3.org/2010/05/bunny/trailer.mp4",
       "mediaType": "video",
       "isPlaying": false,
       "currentTime": 0,
       "serverTimestamp": 1788962813356,
-      "mediaTitle": "Big Buck Bunny (Animated Movie)",
+      "mediaTitle": "Big Buck Bunny (Trailer)",
       "uploadedBy": "System",
       "playlist": [],
       "lastUpdated": 1788962813356
     },
     "messages": [
       {
-        "id": "dnb1o1c",
+        "id": "welcome-msg",
         "sender": "System",
-        "text": "gopi joined the lounge.",
-        "time": "02:01 PM",
+        "text": "Welcome to SyncSpace Lounge! Media and messages are synced in real-time.",
+        "time": "12:00 PM",
         "avatarColor": "#9ca3af",
-        "timestamp": 1788964073479.8994
-      },
-      {
-        "id": "5btt8h4",
-        "sender": "System",
-        "text": "gopi left the lounge.",
-        "time": "02:04 PM",
-        "avatarColor": "#9ca3af",
-        "timestamp": 1788964073479.8994
-      },
-      {
-        "id": "p0kfkrb",
-        "sender": "System",
-        "text": "gopi joined the lounge.",
-        "time": "02:04 PM",
-        "avatarColor": "#9ca3af",
-        "timestamp": 1788964073479.8994
-      },
-      {
-        "id": "vptqv26",
-        "sender": "System",
-        "text": "gopi joined the lounge.",
-        "time": "02:09 PM",
-        "avatarColor": "#9ca3af",
-        "timestamp": 1788964073479.8994
+        "timestamp": 1788964073479
       }
     ]
   }

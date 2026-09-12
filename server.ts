@@ -322,36 +322,44 @@ async function startServer() {
       if (!rooms.has(roomId)) {
         const initialTimestamp = Date.now();
         const initialMovieState = {
-          mediaUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+          mediaUrl: "https://media.w3.org/2010/05/bunny/trailer.mp4",
           mediaType: "video" as const,
           isPlaying: false,
           currentTime: 0,
           serverTimestamp: initialTimestamp,
-          mediaTitle: "Big Buck Bunny (Animated Movie)",
+          mediaTitle: "Big Buck Bunny (Trailer)",
           uploadedBy: "System",
           playlist: [
             {
               id: 'vid-bunny',
-              url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-              title: 'Big Buck Bunny (Animated Movie)',
+              url: 'https://media.w3.org/2010/05/bunny/trailer.mp4',
+              title: 'Big Buck Bunny (Trailer)',
               uploadedBy: 'System',
               thumbnail: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&auto=format&fit=crop&q=80',
               timestamp: initialTimestamp
             },
             {
-              id: 'vid-tears',
-              url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-              title: 'Tears of Steel (Sci-Fi Short)',
+              id: 'vid-sintel',
+              url: 'https://media.w3.org/2010/05/sintel/trailer_hd.mp4',
+              title: 'Sintel (Fantasy Trailer HD)',
               uploadedBy: 'System',
-              thumbnail: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=400&auto=format&fit=crop&q=80',
+              thumbnail: 'https://images.unsplash.com/photo-1514533450685-4493e01d1fdc?w=400&auto=format&fit=crop&q=80',
               timestamp: initialTimestamp
             },
             {
-              id: 'vid-elephants',
-              url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-              title: 'Elephants Dream (Open Movie)',
+              id: 'vid-bluemoon',
+              url: 'https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-576p.mp4',
+              title: 'View From A Blue Moon (Action HD)',
               uploadedBy: 'System',
-              thumbnail: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400&auto=format&fit=crop&q=80',
+              thumbnail: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=400&auto=format&fit=crop&q=80',
+              timestamp: initialTimestamp
+            },
+            {
+              id: 'vid-local-demo',
+              url: '/uploads/1788967697862-318783671-test_video.mp4',
+              title: 'Lounge Demo Video (Local Storage)',
+              uploadedBy: 'System',
+              thumbnail: 'https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=400&auto=format&fit=crop&q=80',
               timestamp: initialTimestamp
             }
           ]
@@ -420,8 +428,8 @@ async function startServer() {
         room.movieState.playlist = [
           {
             id: 'vid-bunny',
-            url: room.movieState.mediaUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-            title: room.movieState.mediaTitle || 'Big Buck Bunny (Animated Movie)',
+            url: room.movieState.mediaUrl || "https://media.w3.org/2010/05/bunny/trailer.mp4",
+            title: room.movieState.mediaTitle || 'Big Buck Bunny (Trailer)',
             uploadedBy: room.movieState.uploadedBy || 'System',
             timestamp: Date.now()
           }
@@ -555,8 +563,8 @@ async function startServer() {
               room.movieState.mediaTitle = fallback.title;
               room.movieState.uploadedBy = fallback.uploadedBy;
             } else {
-              room.movieState.mediaUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
-              room.movieState.mediaTitle = "Big Buck Bunny (Animated Movie)";
+              room.movieState.mediaUrl = "https://media.w3.org/2010/05/bunny/trailer.mp4";
+              room.movieState.mediaTitle = "Big Buck Bunny (Trailer)";
               room.movieState.uploadedBy = "System";
             }
             room.movieState.currentTime = 0;
@@ -861,6 +869,8 @@ async function startServer() {
           mediaUrl: syncedMovie.mediaUrl,
           mediaTitle: syncedMovie.mediaTitle,
           uploadedBy: syncedMovie.uploadedBy,
+          playlist: syncedMovie.playlist || room.movieState.playlist,
+          duration: syncedMovie.duration || room.movieState.duration,
           serverTimestamp: syncedMovie.serverTimestamp
         });
 
@@ -875,7 +885,7 @@ async function startServer() {
           serverTimestamp: room.imageState.serverTimestamp
         });
 
-        socket.emit("room-state", {
+        const fullRoomState = {
           roomId,
           movieState: syncedMovie,
           imageState: room.imageState,
@@ -886,7 +896,10 @@ async function startServer() {
           },
           participants: Array.from(room.participants.values()),
           messages: room.messages
-        });
+        };
+
+        socket.emit("room-state", fullRoomState);
+        socket.emit("room_state", fullRoomState);
       }
     });
 
@@ -1148,8 +1161,9 @@ async function startServer() {
               room.movieState.mediaTitle = fallback.title;
               room.movieState.uploadedBy = fallback.uploadedBy;
             } else {
-              room.movieState.mediaUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
-              room.movieState.mediaTitle = "Big Buck Bunny (Animated Movie)";
+              room.movieState.mediaUrl = "https://media.w3.org/2010/05/bunny/trailer.mp4";
+              room.movieState.mediaTitle = "Big Buck Bunny (Trailer)";
+              room.movieState.uploadedBy = "System";
             }
             room.movieState.currentTime = 0;
             room.movieState.isPlaying = false;
