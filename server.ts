@@ -1177,7 +1177,7 @@ async function startServer() {
 
   // Media upload endpoint (movies, audio, photos) with robust error trapping
   app.post("/api/upload", (req, res) => {
-    upload.single("file")(req, res, (err) => {
+    (upload.single("file") as any)(req, res, (err: any) => {
       if (err) {
         console.error("[Upload] Multer error during upload:", err);
         if (err instanceof multer.MulterError) {
@@ -1242,7 +1242,7 @@ async function startServer() {
   // bypassing reverse proxy / Cloud Run 32MB payload limits completely!
   app.post("/api/upload/chunk", (req, res) => {
     res.header("Access-Control-Allow-Origin", "*");
-    uploadChunk.single("chunk")(req, res, async (err) => {
+    (uploadChunk.single("chunk") as any)(req, res, async (err: any) => {
       if (err) {
         console.error("[Chunk Upload] Multer error:", err);
         return res.status(400).json({ error: `Chunk upload failed: ${err.message}` });
