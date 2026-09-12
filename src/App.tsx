@@ -5,9 +5,10 @@ import MoviePlayer from './components/MoviePlayer';
 import ImageViewer from './components/ImageViewer';
 import ChatDrawer from './components/ChatDrawer';
 import VoiceCall from './components/VoiceCall';
-import { Film, Image as ImageIcon, Copy, Check, Users, ExternalLink, Sparkles, Share2, X, MessageCircle, LogOut } from 'lucide-react';
+import { Film, Image as ImageIcon, Copy, Check, Users, ExternalLink, Sparkles, Share2, X, MessageCircle, LogOut, AlertTriangle, Globe } from 'lucide-react';
 import { Participant, Message, MovieState, ImageState, MovieActionPayload, ImageActionPayload, UserStatus } from './types';
 import { useUserPresence } from './hooks/useUserPresence';
+import { BACKEND_URL, isStaticHostWithoutBackend } from './config';
 
 export const AVATAR_COLORS = ['#6366f1', '#ec4899', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6'];
 
@@ -81,6 +82,7 @@ export default function App() {
     enabled: inLounge
   });
   const [chatDrawerTab, setChatDrawerTab] = useState<'chat' | 'members'>('chat');
+  const [showNetlifyNotice, setShowNetlifyNotice] = useState(() => isStaticHostWithoutBackend());
 
   // Movie State (Independent sync channel)
   const [movieState, setMovieState] = useState<MovieState>({
@@ -217,7 +219,7 @@ export default function App() {
       if (color) localStorage.setItem(STORAGE_KEYS.AVATAR_COLOR, color);
     } catch (_) {}
 
-    const newSocket = io({
+    const newSocket = io(BACKEND_URL || undefined, {
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -509,6 +511,15 @@ export default function App() {
               </div>
             </div>
 
+            {showNetlifyNotice && (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 flex items-start space-x-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-[11px] leading-relaxed">
+                  <span className="font-semibold text-amber-300">Netlify Deployment Notice:</span> Real-time sync requires a WebSocket server. Add <code className="bg-amber-950/80 px-1 py-0.5 rounded text-amber-200 font-mono">VITE_BACKEND_URL</code> in Netlify Environment Variables or deploy full-stack to Render/Railway.
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
               className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all transform hover:-translate-y-0.5 cursor-pointer"
@@ -528,6 +539,26 @@ export default function App() {
   return (
     <div className="relative h-screen w-screen overflow-hidden flex flex-col bg-slate-950 font-sans p-2 lg:p-4 gap-3.5">
       <ThreeBackground />
+
+      {/* Netlify / Static Host Notice */}
+      {showNetlifyNotice && (
+        <div className="flex items-center justify-between px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 shrink-0 z-30 shadow-md">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="text-[11px] sm:text-xs">
+              <strong className="text-amber-300">Netlify Deployment Notice:</strong> Real-time synchronization requires a running backend server.
+              Add <code className="bg-amber-950/60 px-1 py-0.5 rounded text-amber-300 font-mono text-[10px] sm:text-[11px]">VITE_BACKEND_URL</code> in Netlify Environment Variables, or host on Render/Railway.
+            </span>
+          </div>
+          <button
+            onClick={() => setShowNetlifyNotice(false)}
+            className="p-1 hover:bg-amber-500/20 rounded-lg text-amber-300 transition-colors ml-2 shrink-0"
+            title="Dismiss notice"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Top Navigation & Controls Bar */}
       <header className="flex items-center justify-between px-2.5 sm:px-5 py-2 sm:py-2.5 bg-slate-900/95 backdrop-blur-xl border border-slate-800/80 rounded-2xl shadow-xl shrink-0 z-20 gap-2 overflow-hidden">

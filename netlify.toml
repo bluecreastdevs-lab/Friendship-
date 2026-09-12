@@ -5,6 +5,40 @@
 [build.environment]
   NODE_VERSION = "20"
 
+# ==============================================================================
+# Netlify Deployment Guide for Real-Time Synchronization:
+# ------------------------------------------------------------------------------
+# Netlify is a static CDN host and does not run persistent Node.js / Socket.IO
+# WebSocket servers. To enable real-time sync when deploying to Netlify:
+#
+# METHOD 1 (Recommended):
+#   Deploy your Node.js backend (server.ts) to a free service like Render,
+#   Railway, or Fly.io. Then in Netlify Site configuration -> Environment variables,
+#   set:
+#     VITE_BACKEND_URL = "https://your-backend-service.onrender.com"
+#
+# METHOD 2 (Netlify Proxy Rewrites):
+#   Uncomment the proxy redirects below and replace with your backend domain:
+#
+# [[redirects]]
+#   from = "/socket.io/*"
+#   to = "https://your-backend-service.onrender.com/socket.io/:splat"
+#   status = 200
+#   force = true
+#
+# [[redirects]]
+#   from = "/api/*"
+#   to = "https://your-backend-service.onrender.com/api/:splat"
+#   status = 200
+#   force = true
+#
+# [[redirects]]
+#   from = "/uploads/*"
+#   to = "https://your-backend-service.onrender.com/uploads/:splat"
+#   status = 200
+#   force = true
+# ==============================================================================
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

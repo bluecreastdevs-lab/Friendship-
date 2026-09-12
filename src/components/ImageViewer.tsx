@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { ImageState, ImageItem, Participant, ImageActionPayload } from '../types';
 import { MEDIA_PRESETS } from '../presets';
+import { getApiUrl, getMediaUrl } from '../config';
 
 export interface ImageViewerProps {
   socket: Socket | null;
@@ -108,7 +109,7 @@ export default function ImageViewer({
 
     // Call deletion API endpoint for filesystem cleanup
     try {
-      await fetch('/api/media/delete', {
+      await fetch(getApiUrl('/api/media/delete'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId, url: targetUrl, mediaType: 'image' })
@@ -472,7 +473,7 @@ export default function ImageViewer({
         {imageState.activeImageUrl && !imageLoadError ? (
           <div className="relative max-h-full max-w-full flex items-center justify-center p-4 overflow-auto">
             <img
-              src={imageState.activeImageUrl}
+              src={getMediaUrl(imageState.activeImageUrl)}
               alt={imageState.activeImageTitle || 'Shared Image'}
               referrerPolicy="no-referrer"
               onError={() => setImageLoadError(true)}

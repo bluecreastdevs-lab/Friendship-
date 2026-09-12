@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { MovieState, Participant, MovieActionPayload, VideoItem } from '../types';
 import { MEDIA_PRESETS } from '../presets';
+import { getApiUrl, getMediaUrl } from '../config';
 
 export interface MoviePlayerProps {
   socket: Socket | null;
@@ -436,7 +437,7 @@ export default function MoviePlayer({
 
     // Call REST endpoint for filesystem deletion
     try {
-      await fetch('/api/media/delete', {
+      await fetch(getApiUrl('/api/media/delete'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId, url: targetUrl, mediaType: 'video' })
@@ -657,7 +658,7 @@ export default function MoviePlayer({
     if (!movieState.mediaUrl || isOptimizing) return;
     setIsOptimizing(true);
     try {
-      const res = await fetch('/api/media/optimize', {
+      const res = await fetch(getApiUrl('/api/media/optimize'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: movieState.mediaUrl })
@@ -732,7 +733,7 @@ export default function MoviePlayer({
       xhrRef.current = null;
     }
     if (activeUploadIdRef.current) {
-      fetch('/api/upload/abort', {
+      fetch(getApiUrl('/api/upload/abort'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uploadId: activeUploadIdRef.current })
@@ -785,7 +786,7 @@ export default function MoviePlayer({
     const checkChunkOnServer = async (upId: string, idx: number, expectedSize: number) => {
       try {
         const res = await fetch(
-          `/api/upload/chunk-status?uploadId=${encodeURIComponent(upId)}&chunkIndex=${idx}&expectedSize=${expectedSize}`,
+          getApiUrl(`/api/upload/chunk-status?uploadId=${encodeURIComponent(upId)}&chunkIndex=${idx}&expectedSize=${expectedSize}`),
           { cache: 'no-store' }
         );
         if (res.ok) {
@@ -936,7 +937,7 @@ export default function MoviePlayer({
                 fileSize: String(file.size),
                 fileType: file.type
               });
-              xhr.open('POST', `/api/upload/chunk?${queryParams.toString()}`, true);
+              xhr.open('POST', getApiUrl(`/api/upload/chunk?${queryParams.toString()}`), true);
 
               const formData = new FormData();
               formData.append('uploadId', uploadId);
@@ -1232,7 +1233,7 @@ export default function MoviePlayer({
       <div className="relative flex-1 min-h-0 bg-black flex items-center justify-center overflow-hidden">
         <video
           ref={videoRef}
-          src={movieState.mediaUrl}
+          src={getMediaUrl(movieState.mediaUrl)}
           className="w-full h-full max-h-[65vh] lg:max-h-full object-contain"
           playsInline
           preload="metadata"
