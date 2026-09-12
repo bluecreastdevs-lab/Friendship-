@@ -4,6 +4,8 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  NPM_FLAGS = "--legacy-peer-deps"
+  CI = "false"
 
 # ==============================================================================
 # Netlify Deployment Guide for Real-Time Synchronization:
